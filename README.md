@@ -4,7 +4,7 @@ A Pebble watchapp that shows the status of your Hyundai, Kia or Genesis car at a
 
 Data comes from the [Pleos Vehicle Data API](https://document.pleos.ai/en/api-reference/vehicle-data-api/getting-started/for-private-users/overview), the official vehicle data API of Hyundai Motor Group.
 
-All data is processed locally on your Pebble and phone. Your API credentials and vehicle data never leave your devices.
+All data is processed locally on your Pebble and phone. Your API credentials are stored only on your phone and are sent only to Hyundai Motor Group's API (`api.pleos.ai`), never to any third party.
 
 > [!WARNING]
 > **Alpha.** CarGlance is an early, lightly tested prototype. Expect rough edges.
