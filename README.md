@@ -120,12 +120,6 @@ The emulator uses its own simulated phone, but it makes real API calls, so your 
    ```
 3. Open the app's settings from the Pebble phone app.
 
-## Known limitations
-
-- The dashboard only covers doors, charging and battery. Other data the API offers, such as the trunk, climate or tire pressure, isn't shown yet.
-- The API's token lifetime and rate limits aren't documented, so tokens are only renewed when a request is rejected.
-- Only the Pebble Time 2 (`emery`) is supported. Pebble Round 2 (`gabbro`) is not.
-
 ## License
 
 Copyright (C) 2026 Matthias Gellrich
