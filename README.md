@@ -15,6 +15,7 @@ All data is processed locally on your Pebble and phone. Your API credentials are
   <img src="docs/screenshots/charging.png" alt="Dashboard while charging" width="200">
   <img src="docs/screenshots/not-plugged.png" alt="Dashboard while not plugged in" width="200">
   <img src="docs/screenshots/login-error.png" alt="Login error" width="200">
+  <img src="docs/screenshots/car-picker.png" alt="Car picker" width="200">
 </p>
 
 ## Features
@@ -26,10 +27,11 @@ All data is processed locally on your Pebble and phone. Your API credentials are
   - The data refreshes automatically every 10 minutes while the app is open.
   - To refresh manually, press **Select** or tap the refresh icon in the top-left corner (on touchscreen watches).
   - The footer shows when the car last reported its data. If a refresh fails, the last good data stays on screen and the footer shows the error.
+- **Car picker:** if the account has more than one vehicle, a car icon appears in the top-right corner. Tap it to list the cars by name and the last four digits of the VIN, then tap one to show its status. Up/Down and Select also work in the list, and Back closes it. The choice is remembered.
 - **Settings page** in the Pebble phone app:
   - Step-by-step instructions for getting API credentials.
-  - Fields for manufacturer, Client ID, Client Secret and an optional VIN. With no VIN, the first vehicle on the account is used.
-- **Demo mode:** enter `demo` as the Client ID to see sample data without an account.
+  - Fields for manufacturer, Client ID and Client Secret.
+- **Demo mode:** enter `demo` as the Client ID to see sample data for two cars without an account.
 
 Supported watch: Pebble Time 2 (`emery`).
 
@@ -61,7 +63,7 @@ Only vehicles registered when the key was issued are available. For a car you ad
 
 **Phone (PebbleKit JS).** The phone side makes all API calls with `XMLHttpRequest`:
 1. It requests an access token from `POST /v1/auth/personal-token`, using the Client ID, the Client Secret and a `Brand` header.
-2. It finds the vehicle through `GET /v1/vehicles/consent` and caches it.
+2. It lists the account's vehicles through `GET /v1/vehicles/consent` and caches the list until the settings change. The selected car is shown, or the first one if none was picked yet.
 3. It requests `GET /v1/vehicles/{vin}/status` for the doors and `GET /v1/vehicles/{vin}/batteries` for charging, both at the same time.
 4. It reduces the results to a few values (`LOCKED`, `PLUGGED`, `CHARGING`, `SOC`, `REMAIN_MIN`, `UPDATED`, …) and sends them to the watch.
 
@@ -120,7 +122,6 @@ The emulator uses its own simulated phone, but it makes real API calls, so your 
 
 ## Known limitations
 
-- Only one vehicle is shown: the one matching the VIN in the settings, or the first vehicle on the account.
 - The dashboard only covers doors, charging and battery. Other data the API offers, such as the trunk, climate or tire pressure, isn't shown yet.
 - The API's token lifetime and rate limits aren't documented, so tokens are only renewed when a request is rejected.
 - Only the Pebble Time 2 (`emery`) is supported. Pebble Round 2 (`gabbro`) is not.
