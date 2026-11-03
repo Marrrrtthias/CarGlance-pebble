@@ -125,6 +125,14 @@ The emulator uses its own simulated phone, but it makes real API calls, so your 
 - The API's token lifetime and rate limits aren't documented, so tokens are only renewed when a request is rejected.
 - Only the Pebble Time 2 (`emery`) is supported. Pebble Round 2 (`gabbro`) is not.
 
+## License
+
+Copyright (C) 2026 Matthias Gellrich
+
+CarGlance is free software: you can redistribute it and/or modify it under the terms of the [GNU General Public License](LICENSE) as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+CarGlance is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
 ## Disclaimer
 
 CarGlance is an independent project. It is not affiliated with, endorsed by or sponsored by Hyundai Motor Company, Kia Corporation, Genesis Motor or Hyundai Motor Group. Hyundai, Kia, Genesis, Pleos, Bluelink, IONIQ, Pebble and all other product and company names are trademarks or registered trademarks of their respective owners. They are used here only to describe compatibility.
