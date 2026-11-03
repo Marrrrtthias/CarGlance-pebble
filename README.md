@@ -124,3 +124,7 @@ The emulator uses its own simulated phone, but it makes real API calls, so your 
 - The dashboard only covers doors, charging and battery. Other data the API offers, such as the trunk, climate or tire pressure, isn't shown yet.
 - The API's token lifetime and rate limits aren't documented, so tokens are only renewed when a request is rejected.
 - Only the Pebble Time 2 (`emery`) is supported. Pebble Round 2 (`gabbro`) is not.
+
+## Disclaimer
+
+CarGlance is an independent project. It is not affiliated with, endorsed by or sponsored by Hyundai Motor Company, Kia Corporation, Genesis Motor or Hyundai Motor Group. Hyundai, Kia, Genesis, Pleos, Bluelink, IONIQ, Pebble and all other product and company names are trademarks or registered trademarks of their respective owners. They are used here only to describe compatibility.
