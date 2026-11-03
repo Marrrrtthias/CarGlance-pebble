@@ -1,0 +1,44 @@
+{
+  "name": "carglance",
+  "author": "Matthias Gellrich",
+  "version": "0.0.1",
+  "keywords": [
+    "pebble-app"
+  ],
+  "private": true,
+  "dependencies": {
+    "@rebble/clay": "^1.1.0"
+  },
+  "pebble": {
+    "displayName": "CarGlance",
+    "uuid": "974f806a-b190-45eb-8d2f-4b53da551289",
+    "projectType": "moddable",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": [
+      "emery"
+    ],
+    "watchapp": {
+      "watchface": false
+    },
+    "capabilities": [
+      "configurable"
+    ],
+    "messageKeys": [
+      "REFRESH",
+      "STATUS",
+      "ERROR",
+      "NAME",
+      "LOCKED",
+      "PLUGGED",
+      "CHARGING",
+      "CHARGE_STATUS",
+      "SOC",
+      "REMAIN_MIN",
+      "UPDATED"
+    ],
+    "resources": {
+      "media": []
+    }
+  }
+}

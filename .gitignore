@@ -1,0 +1,33 @@
+# Build artifacts (waf output, PBW, Moddable mods)
+build/
+.lock-waf_*
+*.pbw
+
+# Dependencies (installed via `pebble package install`)
+node_modules/
+
+# Emulator testing output
+pebble-logs.txt
+.pebble-logs.pid
+shot_*.png
+screenshot_*.png
+preview_*.gif
+
+# Settings page entries (Client ID/Secret, VIN). The emulator stores them in
+# ~/Library/Application Support/Pebble SDK/<version>/<platform>/localstorage/
+# and pebble-tool writes the page to ~/pebble-tool-emu-app-config-*.html, both
+# outside this folder. These patterns cover copies made inside the project.
+pebble-tool-emu-app-config-*.html
+localstorage/
+*.dir
+*.bak
+.env
+.env.*
+*.local.json
+
+# Local tool and editor state
+.claude/settings.local.json
+.claude/.cc-writes/
+.DS_Store
+.vscode/
+.idea/
