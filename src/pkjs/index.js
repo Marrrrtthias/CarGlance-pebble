@@ -196,11 +196,17 @@ function lockState(status) {
   return states.every(function (s) { return s === 'locked'; }) ? 1 : 0;
 }
 
-function formatTime(iso) {
-  var d = iso ? new Date(iso) : new Date();
-  if (isNaN(d.getTime())) d = new Date();
-  function pad(n) { return (n < 10 ? '0' : '') + n; }
-  return pad(d.getHours()) + ':' + pad(d.getMinutes());
+// The API serves the last data the car uploaded and can't ask the car for new
+// data, so the watch shows how old it is. Returns the older of the given ISO
+// timestamps (the screen is only as fresh as its oldest value) in epoch
+// seconds, or -1 when none is valid.
+function dataTime() {
+  var oldest = -1;
+  for (var i = 0; i < arguments.length; i++) {
+    var t = arguments[i] ? new Date(arguments[i]).getTime() : NaN;
+    if (!isNaN(t) && (oldest === -1 || t < oldest)) oldest = t;
+  }
+  return oldest === -1 ? -1 : Math.floor(oldest / 1000);
 }
 
 function buildPayload(vehicle, status, battery) {
@@ -215,7 +221,7 @@ function buildPayload(vehicle, status, battery) {
     CHARGE_STATUS: charge.status || '',
     SOC: soc,
     REMAIN_MIN: typeof charge.remainTime === 'number' ? charge.remainTime : 0,
-    UPDATED: formatTime((battery && battery.timestamp) || (status && status.timestamp))
+    DATA_TIME: dataTime(battery && battery.timestamp, status && status.timestamp)
   };
 }
 
@@ -225,7 +231,7 @@ function demoPayload() {
     { doors: [{ left: 'locked', right: 'locked' }, { left: 'locked', right: 'locked' }] },
     {
       charge: { plugin: 'connected', status: 'charging', charging: true, stateOfCharge: 73.4, remainTime: 95 },
-      timestamp: new Date().toISOString()
+      timestamp: new Date(Date.now() - 7 * 60 * 1000).toISOString()
     });
 }
 

@@ -36,7 +36,7 @@
       "CHARGE_STATUS",
       "SOC",
       "REMAIN_MIN",
-      "UPDATED"
+      "DATA_TIME"
     ],
     "resources": {
       "media": []

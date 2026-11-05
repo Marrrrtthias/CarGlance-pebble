@@ -25,7 +25,9 @@ All data is processed locally on your Pebble and phone. Your API credentials are
 - **Refreshing:**
   - The data refreshes automatically every 10 minutes while the app is open.
   - To refresh manually, press **Select** or tap the refresh icon in the top-left corner (on touchscreen watches).
-  - The footer shows when the car last reported its data. If a refresh fails, the last good data stays on screen and the footer shows the error.
+  - A refresh fetches the latest data the Pleos API has. The API can't ask the car for new data: the car uploads it on its own schedule, or when you refresh in the official Hyundai, Kia or Genesis app.
+  - So the footer shows how old the car's data is (for example "Car data: 25 min ago"). It turns yellow when the data is more than an hour old.
+  - If a refresh fails, the last good data stays on screen and the footer shows the error.
 - **Settings page** in the Pebble phone app:
   - Step-by-step instructions for getting API credentials.
   - Fields for manufacturer, Client ID, Client Secret and an optional VIN. With no VIN, the first vehicle on the account is used.
@@ -63,7 +65,7 @@ Only vehicles registered when the key was issued are available. For a car you ad
 1. It requests an access token from `POST /v1/auth/personal-token`, using the Client ID, the Client Secret and a `Brand` header.
 2. It finds the vehicle through `GET /v1/vehicles/consent` and caches it.
 3. It requests `GET /v1/vehicles/{vin}/status` for the doors and `GET /v1/vehicles/{vin}/batteries` for charging, both at the same time.
-4. It reduces the results to a few values (`LOCKED`, `PLUGGED`, `CHARGING`, `SOC`, `REMAIN_MIN`, `UPDATED`, …) and sends them to the watch.
+4. It reduces the results to a few values (`LOCKED`, `PLUGGED`, `CHARGING`, `SOC`, `REMAIN_MIN`, `DATA_TIME`, …) and sends them to the watch.
 
 The API has no refresh token, so the cached token is renewed and the request retried once when the API reports it as expired or invalid.
 
