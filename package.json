@@ -36,7 +36,10 @@
       "CHARGE_STATUS",
       "SOC",
       "REMAIN_MIN",
-      "DATA_TIME"
+      "DATA_TIME",
+      "VEHICLES",
+      "VEHICLE_INDEX",
+      "SELECT_VEHICLE"
     ],
     "resources": {
       "media": []

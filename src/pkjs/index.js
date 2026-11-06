@@ -8,12 +8,21 @@ var clay = new Clay(clayConfig, null, { autoHandleEvents: false });
 var API_BASE = 'https://api.pleos.ai';
 var STORE_CONFIG = 'bp-config';
 var STORE_TOKEN = 'bp-token';
-var STORE_VEHICLE = 'bp-vehicle';
+var STORE_VEHICLES = 'bp-vehicles';
+var STORE_SELECTED = 'bp-selected';
+// Replaced by STORE_VEHICLES; removed on startup.
+var STORE_LEGACY_VEHICLE = 'bp-vehicle';
+
+// Upper bound for the vehicle list sent to the watch.
+var MAX_VEHICLES = 20;
 
 // Error codes that mean "get a new token and try again".
 var TOKEN_ERRORS = [40002, 40003, 40004];
 
-var busy = false;
+// VIN whose data is currently being fetched, so that repeated refreshes for
+// the same car don't pile up and results for a car that is no longer selected
+// are dropped.
+var inflightVin = null;
 
 // ---------------------------------------------------------------------------
 // Storage helpers
@@ -40,8 +49,7 @@ function getConfig() {
   return {
     brand: cfg.brand || 'hyundai',
     clientId: (cfg.clientId || '').trim(),
-    clientSecret: (cfg.clientSecret || '').trim(),
-    vin: (cfg.vin || '').trim().toUpperCase()
+    clientSecret: (cfg.clientSecret || '').trim()
   };
 }
 
@@ -152,9 +160,15 @@ function authGet(cfg, path, cb) {
 // ---------------------------------------------------------------------------
 // Data mapping
 
-function resolveVehicle(cfg, cb) {
-  var cached = loadJSON(STORE_VEHICLE);
-  if (cached && cached.vin && (!cfg.vin || cached.vin === cfg.vin)) {
+var DEMO_VEHICLES = [
+  { vin: 'DEMO0000000001234', name: 'IONIQ 5 (demo)' },
+  { vin: 'DEMO0000000005678', name: 'KONA Electric (demo)' }
+];
+
+// Returns the cached vehicle list, fetching it once per set of credentials.
+function loadVehicles(cfg, cb) {
+  var cached = loadJSON(STORE_VEHICLES);
+  if (cached && cached.length) {
     cb(null, cached);
     return;
   }
@@ -163,22 +177,28 @@ function resolveVehicle(cfg, cb) {
       cb(err);
       return;
     }
-    var vehicles = data.vehicles || [];
-    var v = null;
-    for (var i = 0; i < vehicles.length; i++) {
-      if (!cfg.vin || vehicles[i].vin === cfg.vin) {
-        v = vehicles[i];
-        break;
-      }
-    }
-    if (!v) {
-      cb(new ApiError(cfg.vin ? 'VIN not found' : 'No vehicles'));
+    var vehicles = (data.vehicles || []).filter(function (v) {
+      return v && v.vin;
+    }).map(function (v) {
+      return { vin: v.vin, name: v.nickname || v.sellname || v.name || v.vin };
+    });
+    if (!vehicles.length) {
+      cb(new ApiError('No vehicles'));
       return;
     }
-    var vehicle = { vin: v.vin, name: v.nickname || v.sellname || v.name || v.vin };
-    saveJSON(STORE_VEHICLE, vehicle);
-    cb(null, vehicle);
+    saveJSON(STORE_VEHICLES, vehicles);
+    cb(null, vehicles);
   });
+}
+
+// Index of the selected vehicle; falls back to the first one when nothing is
+// selected yet or the selected car is no longer on the account.
+function selectedIndex(vehicles) {
+  var vin = loadJSON(STORE_SELECTED);
+  for (var i = 0; i < vehicles.length; i++) {
+    if (vehicles[i].vin === vin) return i;
+  }
+  return 0;
 }
 
 // 1 = all locked, 0 = closed but unlocked, 2 = a door is open, -1 = unknown
@@ -209,6 +229,16 @@ function dataTime() {
   return oldest === -1 ? -1 : Math.floor(oldest / 1000);
 }
 
+// Vehicle list for the car picker: one "name<TAB>last 4 VIN digits" entry
+// per line.
+function vehicleFields(vehicles, index) {
+  var list = vehicles.slice(0, MAX_VEHICLES).map(function (v) {
+    var name = String(v.name).replace(/[\t\n]/g, ' ').substring(0, 40);
+    return name + '\t' + v.vin.slice(-4);
+  });
+  return { VEHICLES: list.join('\n'), VEHICLE_INDEX: index };
+}
+
 function buildPayload(vehicle, status, battery) {
   var charge = (battery && battery.charge) || {};
   var soc = typeof charge.stateOfCharge === 'number' ? Math.round(charge.stateOfCharge) : -1;
@@ -225,14 +255,25 @@ function buildPayload(vehicle, status, battery) {
   };
 }
 
-function demoPayload() {
-  return buildPayload(
-    { name: 'IONIQ 5 (demo)' },
+function demoPayload(index) {
+  // Sample data ages: fresh-ish for the first car, stale for the second.
+  function ago(min) { return new Date(Date.now() - min * 60 * 1000).toISOString(); }
+  if (index === 1) {
+    return buildPayload(DEMO_VEHICLES[1],
+      { doors: [{ left: 'unlocked', right: 'locked' }, { left: 'locked', right: 'locked' }] },
+      { charge: { plugin: 'disconnected', charging: false, stateOfCharge: 18 }, timestamp: ago(180) });
+  }
+  return buildPayload(DEMO_VEHICLES[0],
     { doors: [{ left: 'locked', right: 'locked' }, { left: 'locked', right: 'locked' }] },
     {
       charge: { plugin: 'connected', status: 'charging', charging: true, stateOfCharge: 73.4, remainTime: 95 },
-      timestamp: new Date(Date.now() - 7 * 60 * 1000).toISOString()
+      timestamp: ago(7)
     });
+}
+
+function merge(a, b) {
+  Object.keys(b).forEach(function (k) { a[k] = b[k]; });
+  return a;
 }
 
 // ---------------------------------------------------------------------------
@@ -246,41 +287,51 @@ function send(payload) {
   });
 }
 
-function sendError(msg) {
-  send({ STATUS: 'error', ERROR: String(msg).substring(0, 60) });
+function sendError(msg, extra) {
+  send(merge({ STATUS: 'error', ERROR: String(msg).substring(0, 60) }, extra || {}));
+}
+
+function isDemo(cfg) {
+  return cfg.clientId.toLowerCase() === 'demo';
 }
 
 function refresh() {
   var cfg = getConfig();
-  if (cfg.clientId.toLowerCase() === 'demo') {
-    send(demoPayload());
+  if (isDemo(cfg)) {
+    var demoIndex = selectedIndex(DEMO_VEHICLES);
+    send(merge(demoPayload(demoIndex), vehicleFields(DEMO_VEHICLES, demoIndex)));
     return;
   }
   if (!cfg.clientId || !cfg.clientSecret) {
     send({ STATUS: 'nocreds' });
     return;
   }
-  if (busy) return;
-  busy = true;
 
-  resolveVehicle(cfg, function (err, vehicle) {
+  loadVehicles(cfg, function (err, vehicles) {
     if (err) {
-      busy = false;
       sendError(err.message);
       return;
     }
+    var index = selectedIndex(vehicles);
+    var vehicle = vehicles[index];
+    if (inflightVin === vehicle.vin) return;
+    inflightVin = vehicle.vin;
+
     var pending = 2;
     var results = {};
     function done(key) {
       return function (e, data) {
         results[key] = { err: e, data: data };
         if (--pending > 0) return;
-        busy = false;
+        // Another car was selected meanwhile; its own refresh reports.
+        if (inflightVin !== vehicle.vin) return;
+        inflightVin = null;
+        var fields = vehicleFields(vehicles, index);
         if (results.status.err && results.battery.err) {
-          sendError(results.battery.err.message);
+          sendError(results.battery.err.message, fields);
           return;
         }
-        send(buildPayload(vehicle, results.status.data, results.battery.data));
+        send(merge(buildPayload(vehicle, results.status.data, results.battery.data), fields));
       };
     }
     var vinPath = '/v1/vehicles/' + encodeURIComponent(vehicle.vin);
@@ -289,16 +340,44 @@ function refresh() {
   });
 }
 
+// The watch reports the picked car by its position in the list it was sent.
+function selectVehicle(index) {
+  var cfg = getConfig();
+  var vehicles = isDemo(cfg) ? DEMO_VEHICLES : loadJSON(STORE_VEHICLES);
+  if (vehicles && vehicles[index]) {
+    saveJSON(STORE_SELECTED, vehicles[index].vin);
+  }
+  refresh();
+}
+
+// Earlier versions picked the car with a VIN field in the settings. Keep that
+// car selected and drop the old vehicle cache.
+function migrateLegacyVin() {
+  saveJSON(STORE_LEGACY_VEHICLE, null);
+  var cfg = loadJSON(STORE_CONFIG);
+  if (!cfg || cfg.vin === undefined) return;
+  var vin = String(cfg.vin || '').trim().toUpperCase();
+  if (vin && !loadJSON(STORE_SELECTED)) {
+    saveJSON(STORE_SELECTED, vin);
+  }
+  delete cfg.vin;
+  saveJSON(STORE_CONFIG, cfg);
+}
+
 // ---------------------------------------------------------------------------
 // Events
 
 Pebble.addEventListener('ready', function () {
   console.log('CarGlance pkjs ready');
+  migrateLegacyVin();
   refresh();
 });
 
 Pebble.addEventListener('appmessage', function (e) {
-  if (e.payload && e.payload.REFRESH !== undefined) {
+  if (!e.payload) return;
+  if (e.payload.SELECT_VEHICLE !== undefined) {
+    selectVehicle(Number(e.payload.SELECT_VEHICLE));
+  } else if (e.payload.REFRESH !== undefined) {
     refresh();
   }
 });
@@ -331,7 +410,8 @@ Pebble.addEventListener('webviewclosed', function (e) {
   });
   saveJSON(STORE_CONFIG, cfg);
   saveJSON(STORE_TOKEN, null);
-  saveJSON(STORE_VEHICLE, null);
+  saveJSON(STORE_VEHICLES, null);
+  inflightVin = null;
   send({ STATUS: 'loading' });
   refresh();
 });
