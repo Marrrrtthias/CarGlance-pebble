@@ -74,14 +74,6 @@ module.exports = [
         attributes: { placeholder: 'Client Secret', type: 'password' }
       },
       {
-        type: 'input',
-        messageKey: 'vin',
-        label: 'VIN (optional)',
-        description: 'Leave empty to use the first vehicle on your account.',
-        defaultValue: '',
-        attributes: { placeholder: 'e.g. KMHxxxxxxxxxxxxxx', autocapitalize: 'characters' }
-      },
-      {
         type: 'text',
         defaultValue: '<small>Your credentials are stored on your phone only and are used ' +
           'solely to call api.pleos.ai. Enter <b>demo</b> as Client ID to see sample data.</small>'

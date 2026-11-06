@@ -29,6 +29,15 @@ const red = render.makeColor(255, 85, 85);
 let state = { status: "loading" };
 let refreshing = true;
 
+// Cars on the account ({ name, last4 }) and the index of the shown one.
+let vehicles = [];
+let vehicleIndex = 0;
+
+// "main" | "picker"
+let screenMode = "main";
+let pickerIndex = 0;  // highlighted row
+let pickerScroll = 0; // first visible row
+
 // ---------------------------------------------------------------------------
 // Icons (drawn from primitives, 36x36 box with top-left at x, y)
 
@@ -74,6 +83,18 @@ function drawRefresh(cx, cy, color, bg) {
     // Arrowhead at 12 o'clock, pointing clockwise.
     render.drawLine(cx + 5, cy - 9, cx - 1, cy - 15, color, 3);
     render.drawLine(cx + 5, cy - 9, cx - 1, cy - 3, color, 3);
+}
+
+// Front-left view of a car, centered on cx, cy; bg fills the windows.
+function drawCar(cx, cy, color, bg) {
+    render.drawRoundRect(cx - 8, cy - 9, 16, 9, color, 3);  // cabin
+    render.fillRectangle(bg, cx - 5, cy - 6, 4, 5);         // windows
+    render.fillRectangle(bg, cx + 1, cy - 6, 4, 5);
+    render.drawRoundRect(cx - 13, cy - 1, 26, 9, color, 3); // body
+    render.drawCircle(bg, cx - 7, cy + 8, 4, 0, 360);       // wheel arches
+    render.drawCircle(bg, cx + 7, cy + 8, 4, 0, 360);
+    render.drawCircle(color, cx - 7, cy + 8, 3, 0, 360);    // wheels
+    render.drawCircle(color, cx + 7, cy + 8, 3, 0, 360);
 }
 
 function drawBattery(x, y, pct, color) {
@@ -147,18 +168,24 @@ function drawRow(top, label, value, valueColor) {
 // ---------------------------------------------------------------------------
 // Screens
 
-// Tap target of the refresh button in the header's top-left corner.
+// Tap targets in the header: refresh top-left, car picker top-right.
 const REFRESH_BTN = { x: 0, y: 0, w: 44, h: 40 };
+const CAR_BTN = { x: render.width - 44, y: 0, w: 44, h: 40 };
 
 function hasRefreshButton() {
     return state.status === "ok" || state.status === "error";
 }
 
-function drawHeader(title) {
+function hasCarButton() {
+    return vehicles.length > 1 && state.status !== "nocreds";
+}
+
+function drawHeader(title, withRefresh, withCar) {
     render.fillRectangle(blue, 0, 0, render.width, 36);
-    const withButton = hasRefreshButton();
-    if (withButton) drawRefresh(18, 18, refreshing ? gray : white, blue);
-    const maxW = render.width - (withButton ? 72 : 12);
+    if (withRefresh) drawRefresh(18, 18, refreshing ? gray : white, blue);
+    if (withCar) drawCar(render.width - 18, 17, white, blue);
+    // The title stays centered, so keep clear of buttons on both sides.
+    const maxW = render.width - (withRefresh || withCar ? 72 : 12);
     centerText(fitText(title, titleFont, maxW), titleFont, white, 2);
 }
 
@@ -222,15 +249,45 @@ function drawDashboard() {
     }
 }
 
+// Car picker: one row per car with its name and the last VIN digits.
+const PICKER_TOP = 40;
+const PICKER_ROW_H = 46;
+const PICKER_ROWS = ((render.height - PICKER_TOP) / PICKER_ROW_H) | 0;
+
+function drawPicker() {
+    drawHeader("Select car", false, false);
+    for (let row = 0; row < PICKER_ROWS; row++) {
+        const i = pickerScroll + row;
+        if (i >= vehicles.length) break;
+        const v = vehicles[i];
+        const top = PICKER_TOP + row * PICKER_ROW_H;
+        const highlighted = i === pickerIndex;
+        if (highlighted) render.fillRectangle(darkGray, 0, top, render.width, PICKER_ROW_H - 2);
+        if (i === vehicleIndex) render.fillRectangle(green, 0, top, 4, PICKER_ROW_H - 2);
+        const maxW = render.width - 20;
+        render.drawText(fitText(v.name, valueFont, maxW), valueFont, white, 12, top + 2);
+        render.drawText(`VIN …${v.last4}`, labelFont, highlighted ? white : gray, 12, top + 27);
+    }
+    // Hint that more cars are above or below.
+    if (pickerScroll > 0) {
+        render.fillRectangle(gray, render.width - 8, PICKER_TOP + 2, 4, 4);
+    }
+    if (pickerScroll + PICKER_ROWS < vehicles.length) {
+        render.fillRectangle(gray, render.width - 8, render.height - 8, 4, 4);
+    }
+}
+
 function draw() {
     render.begin();
     render.fillRectangle(black, 0, 0, render.width, render.height);
 
-    if (state.status === "ok") {
-        drawHeader(state.name || "My car");
+    if (screenMode === "picker") {
+        drawPicker();
+    } else if (state.status === "ok") {
+        drawHeader(state.name || "My car", true, hasCarButton());
         drawDashboard();
     } else {
-        drawHeader("CarGlance");
+        drawHeader(state.name || "CarGlance", hasRefreshButton(), hasCarButton());
         if (state.status === "nocreds") {
             drawCenteredMessage("Open the app settings in the Pebble phone app and enter your Pleos API credentials.", white, 70);
         } else if (state.status === "error") {
@@ -250,21 +307,36 @@ function draw() {
 
 let writable = false;
 let refreshPending = true; // request data as soon as the channel is ready
+let selectPending = -1;    // car picked while the channel was not ready
+
+function flushRequests() {
+    if (!writable || (!refreshPending && selectPending < 0)) return;
+    // Selecting a car also refreshes it on the phone.
+    const msg = selectPending >= 0
+        ? new Map([["SELECT_VEHICLE", selectPending]])
+        : new Map([["REFRESH", 1]]);
+    try {
+        message.write(msg);
+        refreshPending = false;
+        selectPending = -1;
+    } catch (e) {
+        console.log("request write failed: " + e);
+    }
+}
 
 function requestRefresh() {
     refreshing = true;
     draw();
-    if (!writable) {
-        refreshPending = true;
-        return;
-    }
-    refreshPending = false;
-    try {
-        message.write(new Map([["REFRESH", 1]]));
-    } catch (e) {
-        console.log("refresh write failed: " + e);
-        refreshPending = true;
-    }
+    refreshPending = true;
+    flushRequests();
+}
+
+function parseVehicles(str) {
+    if (typeof str !== "string" || !str) return [];
+    return str.split("\n").map(line => {
+        const [name, last4] = line.split("\t");
+        return { name: name || "Car", last4: last4 || "????" };
+    });
 }
 
 function num(v, fallback) {
@@ -273,14 +345,21 @@ function num(v, fallback) {
 
 const message = new Message({
     keys: ["REFRESH", "STATUS", "ERROR", "NAME", "LOCKED", "PLUGGED", "CHARGING",
-        "CHARGE_STATUS", "SOC", "REMAIN_MIN", "UPDATED"],
+        "CHARGE_STATUS", "SOC", "REMAIN_MIN", "UPDATED", "VEHICLES", "VEHICLE_INDEX",
+        "SELECT_VEHICLE"],
     onReadable() {
         const msg = this.read();
         const status = msg.get("STATUS");
+        if (msg.has("VEHICLES")) {
+            vehicles = parseVehicles(msg.get("VEHICLES"));
+            vehicleIndex = num(msg.get("VEHICLE_INDEX"), 0);
+        }
         if (status === "loading") {
             // Sent after the settings changed: drop data of the old account.
             refreshing = true;
             state = { status };
+            vehicles = [];
+            closePicker();
         } else if (status === "ok") {
             refreshing = false;
             state = {
@@ -300,33 +379,118 @@ const message = new Message({
             if (state.status === "ok" && status === "error") {
                 state.lastError = msg.get("ERROR");
             } else {
-                state = { status, error: msg.get("ERROR") };
+                // An error keeps the car's name in the header.
+                state = { status, name: status === "error" ? state.name : undefined, error: msg.get("ERROR") };
+            }
+            if (status === "nocreds") {
+                vehicles = [];
+                closePicker();
             }
         }
         draw();
     },
     onWritable() {
         writable = true;
-        if (refreshPending) requestRefresh();
+        flushRequests();
     },
     onSuspend() {
         writable = false;
     }
 });
 
+// ---------------------------------------------------------------------------
+// Car picker
+
+// Subscribed only while the picker is open, so Back still exits the app from
+// the overview.
+let backButton = null;
+
+function openPicker() {
+    screenMode = "picker";
+    pickerIndex = Math.min(vehicleIndex, vehicles.length - 1);
+    pickerScroll = 0;
+    movePicker(0);
+    if (!backButton) {
+        backButton = new Button({
+            type: "back",
+            onPush(down) {
+                if (down) {
+                    closePicker();
+                    draw();
+                }
+            }
+        });
+    }
+    draw();
+}
+
+function closePicker() {
+    screenMode = "main";
+    if (backButton) {
+        backButton.close();
+        backButton = null;
+    }
+}
+
+// Moves the highlight and scrolls it into view.
+function movePicker(delta) {
+    pickerIndex = Math.max(0, Math.min(vehicles.length - 1, pickerIndex + delta));
+    if (pickerIndex < pickerScroll) pickerScroll = pickerIndex;
+    if (pickerIndex >= pickerScroll + PICKER_ROWS) pickerScroll = pickerIndex - PICKER_ROWS + 1;
+}
+
+function scrollPicker(rows) {
+    const maxScroll = Math.max(0, vehicles.length - PICKER_ROWS);
+    pickerScroll = Math.max(0, Math.min(maxScroll, pickerScroll + rows));
+    pickerIndex = Math.max(pickerScroll, Math.min(pickerScroll + PICKER_ROWS - 1, pickerIndex));
+}
+
+function pickVehicle(i) {
+    closePicker();
+    if (i !== vehicleIndex) {
+        vehicleIndex = i;
+        // Show the new car's name right away; its data follows.
+        state = { status: "loading", name: vehicles[i].name };
+    }
+    refreshing = true;
+    selectPending = i;
+    draw();
+    flushRequests();
+}
+
+function pickerRowAt(p) {
+    if (p.y < PICKER_TOP) return -1;
+    const row = ((p.y - PICKER_TOP) / PICKER_ROW_H) | 0;
+    const i = pickerScroll + row;
+    return row < PICKER_ROWS && i < vehicles.length ? i : -1;
+}
+
+// ---------------------------------------------------------------------------
+// Input
+
 new Button({
-    types: ["select"],
-    onPush(down) {
-        if (down) requestRefresh();
+    types: ["select", "up", "down"],
+    onPush(down, type) {
+        if (!down) return;
+        if (screenMode === "picker") {
+            if (type === "select") {
+                pickVehicle(pickerIndex);
+            } else {
+                movePicker(type === "up" ? -1 : 1);
+                draw();
+            }
+        } else if (type === "select") {
+            requestRefresh();
+        }
     }
 });
 
-function inRefreshButton(p) {
-    return p.x >= REFRESH_BTN.x && p.x < REFRESH_BTN.x + REFRESH_BTN.w &&
-        p.y >= REFRESH_BTN.y && p.y < REFRESH_BTN.y + REFRESH_BTN.h;
+function inRect(r, p) {
+    return p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
 }
 
-// A tap counts when it starts and ends inside the refresh button.
+// A tap counts when it starts and ends inside the same target; in the picker
+// a vertical drag scrolls the list instead.
 let touchStart = null;
 let touchLast = null;
 new Touch({
@@ -338,9 +502,27 @@ new Touch({
             if (!touchStart) touchStart = touchLast;
             return;
         }
-        const tapped = touchStart && inRefreshButton(touchStart) && inRefreshButton(touchLast);
+        const start = touchStart, end = touchLast;
         touchStart = touchLast = null;
-        if (tapped && hasRefreshButton()) requestRefresh();
+        if (!start) return;
+
+        if (screenMode === "picker") {
+            const dy = end.y - start.y;
+            if (Math.abs(dy) > 20) {
+                scrollPicker(-Math.round(dy / PICKER_ROW_H) || (dy < 0 ? 1 : -1));
+                draw();
+                return;
+            }
+            const i = pickerRowAt(start);
+            if (i >= 0 && i === pickerRowAt(end)) pickVehicle(i);
+            return;
+        }
+
+        if (hasRefreshButton() && inRect(REFRESH_BTN, start) && inRect(REFRESH_BTN, end)) {
+            requestRefresh();
+        } else if (hasCarButton() && inRect(CAR_BTN, start) && inRect(CAR_BTN, end)) {
+            openPicker();
+        }
     }
 });
 

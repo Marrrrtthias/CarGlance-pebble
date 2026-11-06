@@ -36,7 +36,10 @@
       "CHARGE_STATUS",
       "SOC",
       "REMAIN_MIN",
-      "UPDATED"
+      "UPDATED",
+      "VEHICLES",
+      "VEHICLE_INDEX",
+      "SELECT_VEHICLE"
     ],
     "resources": {
       "media": []
