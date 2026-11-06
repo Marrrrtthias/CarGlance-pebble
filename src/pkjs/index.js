@@ -17,7 +17,10 @@ var STORE_LEGACY_VEHICLE = 'bp-vehicle';
 var MAX_VEHICLES = 20;
 
 // Error codes that mean "get a new token and try again".
-var TOKEN_ERRORS = [40002, 40003, 40004];
+var TOKEN_ERRORS = [401, 403, 4011, 40002, 40003, 40004];
+var TOKEN_EXPIRY_MARGIN_MS = 60000;
+var tokenRequest = null;
+var configGeneration = 0;
 
 // VIN whose data is currently being fetched, so that repeated refreshes for
 // the same car don't pile up and results for a car that is no longer selected
@@ -64,7 +67,39 @@ function ApiError(message, code, httpStatus) {
 
 function isTokenError(err) {
   return err instanceof ApiError &&
-    (err.httpStatus === 401 || TOKEN_ERRORS.indexOf(Number(err.code)) !== -1);
+    (err.httpStatus === 401 || err.httpStatus === 403 ||
+      TOKEN_ERRORS.indexOf(Number(err.code)) !== -1);
+}
+
+// Read only the JWT expiry claim. This is a cache freshness check, not signature
+// verification; the API remains responsible for authenticating the token.
+// Decode base64url using ES5 primitives.
+function tokenExpiresAt(token) {
+  try {
+    if (typeof token !== 'string' || token.split('.').length !== 3) return 0;
+    var encoded = token.split('.')[1];
+    if (!encoded || /[^A-Za-z0-9_-]/.test(encoded) || encoded.length % 4 === 1) return 0;
+    var alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    var bits = 0;
+    var buffer = 0;
+    var decoded = '';
+    for (var i = 0; i < encoded.length; i++) {
+      buffer = (buffer << 6) | alphabet.indexOf(encoded.charAt(i));
+      bits += 6;
+      if (bits >= 8) {
+        bits -= 8;
+        decoded += String.fromCharCode((buffer >> bits) & 255);
+      }
+    }
+    var exp = JSON.parse(decoded).exp;
+    return typeof exp === 'number' && isFinite(exp) && exp > 0 ? exp * 1000 : 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+function usableToken(token) {
+  return tokenExpiresAt(token) > Date.now() + TOKEN_EXPIRY_MARGIN_MS;
 }
 
 function request(method, path, cfg, token, body, cb) {
@@ -92,7 +127,9 @@ function request(method, path, cfg, token, body, cb) {
     }
     var apiErr = json && json.error;
     var msg = apiErr && apiErr.message ? apiErr.message : 'HTTP ' + xhr.status;
-    console.log('API ' + method + ' ' + path + ' failed: ' + xhr.status + ' ' + xhr.responseText);
+    var endpoint = path.replace(/\/vehicles\/[^/]+\/(status|batteries)/, '/vehicles/<vehicle>/$1');
+    console.log('API ' + method + ' ' + endpoint + ' failed: HTTP ' + xhr.status +
+      ' code ' + (apiErr && apiErr.code ? apiErr.code : 'unknown'));
     cb(new ApiError(msg, apiErr && apiErr.code, xhr.status));
   };
   xhr.onerror = function () {
@@ -105,34 +142,64 @@ function request(method, path, cfg, token, body, cb) {
 }
 
 function fetchToken(cfg, cb) {
+  // Status and battery requests share one renewal, including when both reject
+  // the old token at the same time.
+  if (tokenRequest && tokenRequest.generation === configGeneration) {
+    tokenRequest.callbacks.push(cb);
+    return;
+  }
+  var flight = { generation: configGeneration, callbacks: [cb] };
+  tokenRequest = flight;
+  function finish(err, token) {
+    if (tokenRequest === flight) tokenRequest = null;
+    flight.callbacks.forEach(function (callback) { callback(err, token); });
+  }
   request('POST', '/v1/auth/personal-token', cfg, null,
     { clientId: cfg.clientId, clientSecret: cfg.clientSecret },
     function (err, data) {
+      if (flight.generation !== configGeneration) {
+        finish(new ApiError('Settings changed. Please refresh.'));
+        return;
+      }
       if (err) {
         if (err.httpStatus >= 400 && err.httpStatus < 500) {
           err.message = 'Login failed. Check Client ID, Secret and manufacturer.';
         }
-        cb(err);
+        finish(err);
         return;
       }
-      if (!data.accessToken) {
-        cb(new ApiError('No access token'));
+      if (!data || !usableToken(data.accessToken)) {
+        finish(new ApiError('Invalid or expired access token'));
         return;
       }
       saveJSON(STORE_TOKEN, data.accessToken);
-      cb(null, data.accessToken);
+      finish(null, data.accessToken);
     });
 }
 
-// Performs an authorized GET, issuing a token when none is cached and
-// retrying once with a fresh token when the cached one was rejected.
-function authGet(cfg, path, cb) {
+function getToken(cfg, rejectedToken, cb) {
   var cached = loadJSON(STORE_TOKEN);
+  // A delayed failure must not delete a newer token another request obtained.
+  if (cached && cached !== rejectedToken && usableToken(cached)) {
+    cb(null, cached);
+    return;
+  }
+  saveJSON(STORE_TOKEN, null);
+  fetchToken(cfg, cb);
+}
+
+// Refresh before sending an expired token. Still retry once if the server
+// rejects an otherwise unexpired token (revocation, permissions, clock skew).
+function authGet(cfg, path, cb) {
+  var generation = configGeneration;
   function withToken(token, retry) {
     request('GET', path, cfg, token, null, function (err, data) {
+      if (generation !== configGeneration) {
+        cb(new ApiError('Settings changed. Please refresh.'));
+        return;
+      }
       if (err && retry && isTokenError(err)) {
-        saveJSON(STORE_TOKEN, null);
-        fetchToken(cfg, function (tokErr, fresh) {
+        getToken(cfg, token, function (tokErr, fresh) {
           if (tokErr) {
             cb(tokErr);
           } else {
@@ -144,17 +211,13 @@ function authGet(cfg, path, cb) {
       cb(err, data);
     });
   }
-  if (cached) {
-    withToken(cached, true);
-  } else {
-    fetchToken(cfg, function (err, token) {
-      if (err) {
-        cb(err);
-      } else {
-        withToken(token, false);
-      }
-    });
-  }
+  getToken(cfg, null, function (err, token) {
+    if (err) {
+      cb(err);
+    } else {
+      withToken(token, true);
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -402,6 +465,7 @@ Pebble.addEventListener('webviewclosed', function (e) {
     cfg[key] = settings[key] && settings[key].value;
   });
   saveJSON(STORE_CONFIG, cfg);
+  configGeneration++;
   saveJSON(STORE_TOKEN, null);
   saveJSON(STORE_VEHICLES, null);
   inflightVin = null;
