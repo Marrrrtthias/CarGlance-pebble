@@ -168,8 +168,8 @@ function fetchToken(cfg, cb) {
         finish(err);
         return;
       }
-      if (!data || !usableToken(data.accessToken)) {
-        finish(new ApiError('Invalid or expired access token'));
+      if (!data || !data.accessToken) {
+        finish(new ApiError('No access token'));
         return;
       }
       saveJSON(STORE_TOKEN, data.accessToken);

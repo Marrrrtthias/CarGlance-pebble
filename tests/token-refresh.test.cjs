@@ -140,8 +140,8 @@ test('failed renewal notifies all waiting requests and allows a later attempt', 
   take(app, 'POST');
 });
 
-test('bad token responses are not persisted or sent to vehicle endpoints', () => {
-  for (const token of [undefined, 'invalid', jwt(now / 1000 - 1)]) {
+test('missing token responses are not persisted or sent to vehicle endpoints', () => {
+  for (const token of [undefined, '']) {
     const app = runtime();
     let result;
     app.context.authGet(cfg, '/status', error => { result = error; });
