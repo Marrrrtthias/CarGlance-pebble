@@ -129,6 +129,20 @@ test('simultaneous rejections share renewal and delayed rejections reuse its res
   }
 });
 
+test('rejection of a just-issued token is reported without another login', () => {
+  for (const cache of [new Map(), stored(jwt(now / 1000 - 1))]) {
+    const app = runtime(cache);
+    let result;
+    app.context.authGet(cfg, '/status', error => { result = error; });
+    take(app, 'POST').callback(null, { accessToken: fresh });
+    const get = take(app, 'GET');
+    assert.equal(get.token, fresh);
+    get.callback(new app.context.ApiError('Forbidden', null, 403));
+    assert.equal(result.message, 'Forbidden');
+    assert.equal(app.requests.length, 0);
+  }
+});
+
 test('failed renewal notifies all waiting requests and allows a later attempt', () => {
   const app = runtime();
   let failures = 0;

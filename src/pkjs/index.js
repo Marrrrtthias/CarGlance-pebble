@@ -179,19 +179,25 @@ function fetchToken(cfg, cb) {
     });
 }
 
+// Calls cb(err, token, cached), where cached tells whether the token was
+// reused from storage rather than issued by a renewal for this call.
 function getToken(cfg, rejectedToken, cb) {
   var cached = loadJSON(STORE_TOKEN);
   // A delayed failure must not delete a newer token another request obtained.
   if (cached && cached !== rejectedToken && usableToken(cached)) {
-    cb(null, cached);
+    cb(null, cached, true);
     return;
   }
   saveJSON(STORE_TOKEN, null);
-  fetchToken(cfg, cb);
+  fetchToken(cfg, function (err, token) {
+    cb(err, token, false);
+  });
 }
 
 // Refresh before sending an expired token. Still retry once if the server
-// rejects an otherwise unexpired token (revocation, permissions, clock skew).
+// rejects an unexpired cached token (revocation, clock skew). A token that was
+// just issued can't be stale, so its rejection is a real access denial and is
+// reported without another login.
 // Responses that arrive after a settings change are dropped without calling
 // cb: the refresh started by webviewclosed reports for the new settings, and
 // a stale result must not overwrite it or clear its inflightVin.
@@ -213,11 +219,11 @@ function authGet(cfg, path, cb) {
       cb(err, data);
     });
   }
-  getToken(cfg, null, function (err, token) {
+  getToken(cfg, null, function (err, token, cached) {
     if (err) {
       cb(err);
     } else {
-      withToken(token, true);
+      withToken(token, cached);
     }
   });
 }

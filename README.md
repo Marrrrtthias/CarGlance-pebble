@@ -73,9 +73,10 @@ The API has no refresh token. Before each authorized request, the app checks the
 cached access token's JWT `exp` timestamp and renews it if it has expired or has
 less than one minute remaining. Missing or unreadable expiry claims also cause
 renewal. It uses the token's actual expiry rather than assuming a fixed lifetime.
-Parallel requests share a single token renewal. If the API still rejects a token
-as unauthorized, forbidden, or invalid, the request is retried once with a renewed
-token; a persistent rejection is shown as an error.
+Parallel requests share a single token renewal. If the API still rejects a cached
+token as unauthorized, forbidden, or invalid, the request is retried once with a
+renewed token; a persistent rejection is shown as an error. A rejection of a token
+that was just issued is shown right away, since a new login would not change it.
 
 **Settings and secrets.**
 - The settings page is built with [Clay](https://github.com/pebble-dev/clay), with automatic event handling turned off.
