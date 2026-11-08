@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PEBBLE_TOOL_VERSION: "5.1.2"
+  PEBBLE_SDK_VERSION: "4.33.1"
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run test suite
+        run: node --test tests/
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install pebble-tool
+        run: uv tool install --python 3.13 "pebble-tool==${PEBBLE_TOOL_VERSION}"
+
+      - name: Cache Pebble SDK
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pebble-sdk/SDKs
+          key: pebble-sdk-${{ runner.os }}-${{ env.PEBBLE_SDK_VERSION }}
+
+      - name: Install Pebble SDK
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: pebble sdk install "${PEBBLE_SDK_VERSION}"
+
+      - name: Activate Pebble SDK
+        if: steps.sdk-cache.outputs.cache-hit == 'true'
+        run: pebble sdk activate "${PEBBLE_SDK_VERSION}"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: pebble build
+
+      - name: Upload PBW
+        uses: actions/upload-artifact@v4
+        with:
+          name: carglance-pbw
+          path: build/*.pbw
+          if-no-files-found: error
