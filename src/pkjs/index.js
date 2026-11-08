@@ -216,11 +216,17 @@ function lockState(status) {
   return states.every(function (s) { return s === 'locked'; }) ? 1 : 0;
 }
 
-function formatTime(iso) {
-  var d = iso ? new Date(iso) : new Date();
-  if (isNaN(d.getTime())) d = new Date();
-  function pad(n) { return (n < 10 ? '0' : '') + n; }
-  return pad(d.getHours()) + ':' + pad(d.getMinutes());
+// The API serves the last data the car uploaded and can't ask the car for new
+// data, so the watch shows how old it is. Returns the older of the given ISO
+// timestamps (the screen is only as fresh as its oldest value) in epoch
+// seconds, or -1 when none is valid.
+function dataTime() {
+  var oldest = -1;
+  for (var i = 0; i < arguments.length; i++) {
+    var t = arguments[i] ? new Date(arguments[i]).getTime() : NaN;
+    if (!isNaN(t) && (oldest === -1 || t < oldest)) oldest = t;
+  }
+  return oldest === -1 ? -1 : Math.floor(oldest / 1000);
 }
 
 // Vehicle list for the car picker: one "name<TAB>last 4 VIN digits" entry
@@ -245,22 +251,23 @@ function buildPayload(vehicle, status, battery) {
     CHARGE_STATUS: charge.status || '',
     SOC: soc,
     REMAIN_MIN: typeof charge.remainTime === 'number' ? charge.remainTime : 0,
-    UPDATED: formatTime((battery && battery.timestamp) || (status && status.timestamp))
+    DATA_TIME: dataTime(battery && battery.timestamp, status && status.timestamp)
   };
 }
 
 function demoPayload(index) {
-  var now = new Date().toISOString();
+  // Sample data ages: fresh-ish for the first car, stale for the second.
+  function ago(min) { return new Date(Date.now() - min * 60 * 1000).toISOString(); }
   if (index === 1) {
     return buildPayload(DEMO_VEHICLES[1],
       { doors: [{ left: 'unlocked', right: 'locked' }, { left: 'locked', right: 'locked' }] },
-      { charge: { plugin: 'disconnected', charging: false, stateOfCharge: 18 }, timestamp: now });
+      { charge: { plugin: 'disconnected', charging: false, stateOfCharge: 18 }, timestamp: ago(180) });
   }
   return buildPayload(DEMO_VEHICLES[0],
     { doors: [{ left: 'locked', right: 'locked' }, { left: 'locked', right: 'locked' }] },
     {
       charge: { plugin: 'connected', status: 'charging', charging: true, stateOfCharge: 73.4, remainTime: 95 },
-      timestamp: now
+      timestamp: ago(7)
     });
 }
 

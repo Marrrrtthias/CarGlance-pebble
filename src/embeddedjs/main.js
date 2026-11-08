@@ -8,6 +8,11 @@ import Button from "pebble/button";
 import Touch from "embedded:sensor/Touch/pebble";
 
 const AUTO_REFRESH_MS = 10 * 60 * 1000;
+const AGE_TICK_MS = 60 * 1000;
+// How long a failed refresh's error replaces the data's age in the footer.
+const ERROR_SHOW_MS = 5 * 1000;
+// The footer turns yellow once the car's data is older than this.
+const STALE_AFTER_S = 60 * 60;
 
 const render = new Poco(screen);
 
@@ -156,6 +161,22 @@ function formatRemain(min) {
     return h ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m`;
 }
 
+// Age of the car's data in seconds; dataTime is in epoch seconds.
+function dataAge(dataTime) {
+    return Math.max(0, Date.now() / 1000 - dataTime);
+}
+
+// Formats an age in seconds, e.g. "5 min ago".
+function formatAge(ageS) {
+    const min = (ageS / 60) | 0;
+    if (min < 1) return "just now";
+    if (min < 60) return `${min} min ago`;
+    const h = (min / 60) | 0;
+    if (h < 24) return `${h} h ago`;
+    const d = (h / 24) | 0;
+    return d === 1 ? "1 day ago" : `${d} days ago`;
+}
+
 // Row: icon at the left, small gray label and a bold value next to it.
 const ICON_X = 12;
 const TEXT_X = 58;
@@ -244,8 +265,11 @@ function drawDashboard() {
         centerText("Updating…", labelFont, gray, 205);
     } else if (s.lastError) {
         centerText(fitText(`Update failed: ${s.lastError}`, labelFont, render.width - 12), labelFont, red, 205);
+    } else if (s.dataTime >= 0) {
+        const age = dataAge(s.dataTime);
+        centerText(`Car data: ${formatAge(age)}`, labelFont, age > STALE_AFTER_S ? yellow : gray, 205);
     } else {
-        centerText(`Updated ${s.updated || "--:--"}`, labelFont, gray, 205);
+        centerText("Car data: age unknown", labelFont, gray, 205);
     }
 }
 
@@ -343,9 +367,24 @@ function num(v, fallback) {
     return typeof v === "number" ? v : fallback;
 }
 
+// Shows a failed refresh's error in the footer for a few seconds, then goes
+// back to the data's age, so the age stays visible while the data gets older.
+let errorTimer;
+function showLastError(error) {
+    const errState = state;
+    errState.lastError = error;
+    if (errorTimer !== undefined) clearTimeout(errorTimer);
+    errorTimer = setTimeout(() => {
+        errorTimer = undefined;
+        if (state !== errState) return; // replaced by newer data meanwhile
+        delete errState.lastError;
+        if (screenMode === "main" && !refreshing) draw();
+    }, ERROR_SHOW_MS);
+}
+
 const message = new Message({
     keys: ["REFRESH", "STATUS", "ERROR", "NAME", "LOCKED", "PLUGGED", "CHARGING",
-        "CHARGE_STATUS", "SOC", "REMAIN_MIN", "UPDATED", "VEHICLES", "VEHICLE_INDEX",
+        "CHARGE_STATUS", "SOC", "REMAIN_MIN", "DATA_TIME", "VEHICLES", "VEHICLE_INDEX",
         "SELECT_VEHICLE"],
     onReadable() {
         const msg = this.read();
@@ -371,13 +410,13 @@ const message = new Message({
                 chargeStatus: msg.get("CHARGE_STATUS") || "",
                 soc: num(msg.get("SOC"), -1),
                 remainMin: num(msg.get("REMAIN_MIN"), 0),
-                updated: msg.get("UPDATED")
+                dataTime: num(msg.get("DATA_TIME"), -1)
             };
         } else if (status) {
             refreshing = false;
             // Keep showing the last good data if a later refresh fails.
             if (state.status === "ok" && status === "error") {
-                state.lastError = msg.get("ERROR");
+                showLastError(msg.get("ERROR"));
             } else {
                 // An error keeps the car's name in the header.
                 state = { status, name: status === "error" ? state.name : undefined, error: msg.get("ERROR") };
@@ -527,5 +566,11 @@ new Touch({
 });
 
 setInterval(requestRefresh, AUTO_REFRESH_MS);
+// Keep the data's age in the footer current between refreshes. Only redraw
+// when the footer actually shows an age.
+setInterval(() => {
+    if (screenMode === "main" && state.status === "ok" && !refreshing &&
+        !state.lastError && state.dataTime >= 0) draw();
+}, AGE_TICK_MS);
 
 draw();
