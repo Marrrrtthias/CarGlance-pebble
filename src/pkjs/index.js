@@ -127,9 +127,7 @@ function request(method, path, cfg, token, body, cb) {
     }
     var apiErr = json && json.error;
     var msg = apiErr && apiErr.message ? apiErr.message : 'HTTP ' + xhr.status;
-    var endpoint = path.replace(/\/vehicles\/[^/]+\/(status|batteries)/, '/vehicles/<vehicle>/$1');
-    console.log('API ' + method + ' ' + endpoint + ' failed: HTTP ' + xhr.status +
-      ' code ' + (apiErr && apiErr.code ? apiErr.code : 'unknown'));
+    console.log('API ' + method + ' ' + path + ' failed: ' + xhr.status + ' ' + xhr.responseText);
     cb(new ApiError(msg, apiErr && apiErr.code, xhr.status));
   };
   xhr.onerror = function () {
