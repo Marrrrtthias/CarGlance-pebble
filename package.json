@@ -1,7 +1,7 @@
 {
   "name": "carglance",
   "author": "Matthias Gellrich",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "license": "GPL-3.0-or-later",
   "keywords": [
     "pebble-app"
