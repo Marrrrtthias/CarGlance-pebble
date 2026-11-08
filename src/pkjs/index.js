@@ -16,8 +16,15 @@ var STORE_LEGACY_VEHICLE = 'bp-vehicle';
 // Upper bound for the vehicle list sent to the watch.
 var MAX_VEHICLES = 20;
 
-// Error codes that mean "get a new token and try again".
-var TOKEN_ERRORS = [40002, 40003, 40004];
+// Responses that mean "get a new token and try again", by HTTP status and by
+// the API's own `error.code`. 40002-40004 were handled from the start. The API
+// codes 401, 403 and 4011 were added for issue #8 as likely token rejections;
+// no failing response was captured to confirm them.
+var TOKEN_HTTP_STATUSES = [401, 403];
+var TOKEN_ERRORS = [401, 403, 4011, 40002, 40003, 40004];
+var TOKEN_EXPIRY_MARGIN_MS = 60000;
+var tokenRequest = null;
+var configGeneration = 0;
 
 // VIN whose data is currently being fetched, so that repeated refreshes for
 // the same car don't pile up and results for a car that is no longer selected
@@ -64,7 +71,40 @@ function ApiError(message, code, httpStatus) {
 
 function isTokenError(err) {
   return err instanceof ApiError &&
-    (err.httpStatus === 401 || TOKEN_ERRORS.indexOf(Number(err.code)) !== -1);
+    (TOKEN_HTTP_STATUSES.indexOf(err.httpStatus) !== -1 ||
+      TOKEN_ERRORS.indexOf(Number(err.code)) !== -1);
+}
+
+// Read only the JWT expiry claim. This is a cache freshness check, not signature
+// verification; the API remains responsible for authenticating the token.
+// Decode base64url using ES5 primitives.
+function tokenExpiresAt(token) {
+  try {
+    var parts = typeof token === 'string' ? token.split('.') : [];
+    if (parts.length !== 3) return 0;
+    var encoded = parts[1];
+    if (!encoded || /[^A-Za-z0-9_-]/.test(encoded) || encoded.length % 4 === 1) return 0;
+    var alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    var bits = 0;
+    var buffer = 0;
+    var decoded = '';
+    for (var i = 0; i < encoded.length; i++) {
+      buffer = (buffer << 6) | alphabet.indexOf(encoded.charAt(i));
+      bits += 6;
+      if (bits >= 8) {
+        bits -= 8;
+        decoded += String.fromCharCode((buffer >> bits) & 255);
+      }
+    }
+    var exp = JSON.parse(decoded).exp;
+    return typeof exp === 'number' && isFinite(exp) && exp > 0 ? exp * 1000 : 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+function isTokenValid(token) {
+  return tokenExpiresAt(token) > Date.now() + TOKEN_EXPIRY_MARGIN_MS;
 }
 
 function request(method, path, cfg, token, body, cb) {
@@ -105,34 +145,72 @@ function request(method, path, cfg, token, body, cb) {
 }
 
 function fetchToken(cfg, cb) {
+  // Status and battery requests share one renewal, including when both reject
+  // the old token at the same time.
+  if (tokenRequest && tokenRequest.generation === configGeneration) {
+    tokenRequest.callbacks.push(cb);
+    return;
+  }
+  var flight = { generation: configGeneration, callbacks: [cb] };
+  tokenRequest = flight;
+  function finish(err, token) {
+    if (tokenRequest === flight) tokenRequest = null;
+    flight.callbacks.forEach(function (callback) { callback(err, token); });
+  }
   request('POST', '/v1/auth/personal-token', cfg, null,
     { clientId: cfg.clientId, clientSecret: cfg.clientSecret },
     function (err, data) {
+      // Settings changed meanwhile: drop the response without notifying the
+      // waiters. webviewclosed already started a refresh for the new settings.
+      if (flight.generation !== configGeneration) {
+        if (tokenRequest === flight) tokenRequest = null;
+        return;
+      }
       if (err) {
         if (err.httpStatus >= 400 && err.httpStatus < 500) {
           err.message = 'Login failed. Check Client ID, Secret and manufacturer.';
         }
-        cb(err);
+        finish(err);
         return;
       }
-      if (!data.accessToken) {
-        cb(new ApiError('No access token'));
+      if (!data || !data.accessToken) {
+        finish(new ApiError('No access token'));
         return;
       }
       saveJSON(STORE_TOKEN, data.accessToken);
-      cb(null, data.accessToken);
+      finish(null, data.accessToken);
     });
 }
 
-// Performs an authorized GET, issuing a token when none is cached and
-// retrying once with a fresh token when the cached one was rejected.
-function authGet(cfg, path, cb) {
+// Calls cb(err, token, cached), where cached tells whether the token was
+// reused from storage rather than issued by a renewal for this call.
+function getToken(cfg, rejectedToken, cb) {
   var cached = loadJSON(STORE_TOKEN);
+  // A delayed failure must not delete a newer token another request obtained.
+  if (cached && cached !== rejectedToken && isTokenValid(cached)) {
+    cb(null, cached, true);
+    return;
+  }
+  saveJSON(STORE_TOKEN, null);
+  fetchToken(cfg, function (err, token) {
+    cb(err, token, false);
+  });
+}
+
+// Refresh before sending an expired token. Still retry once if the server
+// rejects an unexpired cached token (revocation, clock skew). A token that was
+// just issued can't be stale, so its rejection is a real access denial and is
+// reported without another login.
+// Responses that arrive after a settings change are dropped without calling
+// cb: the refresh started by webviewclosed reports for the new settings, and
+// a stale result must not overwrite it or clear its inflightVin.
+function authGet(cfg, path, cb) {
+  var generation = configGeneration;
   function withToken(token, retry) {
     request('GET', path, cfg, token, null, function (err, data) {
+      if (generation !== configGeneration) return;
       if (err && retry && isTokenError(err)) {
-        saveJSON(STORE_TOKEN, null);
-        fetchToken(cfg, function (tokErr, fresh) {
+        getToken(cfg, token, function (tokErr, fresh) {
           if (tokErr) {
             cb(tokErr);
           } else {
@@ -144,17 +222,13 @@ function authGet(cfg, path, cb) {
       cb(err, data);
     });
   }
-  if (cached) {
-    withToken(cached, true);
-  } else {
-    fetchToken(cfg, function (err, token) {
-      if (err) {
-        cb(err);
-      } else {
-        withToken(token, false);
-      }
-    });
-  }
+  getToken(cfg, null, function (err, token, cached) {
+    if (err) {
+      cb(err);
+    } else {
+      withToken(token, cached);
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -409,6 +483,7 @@ Pebble.addEventListener('webviewclosed', function (e) {
     cfg[key] = settings[key] && settings[key].value;
   });
   saveJSON(STORE_CONFIG, cfg);
+  configGeneration++;
   saveJSON(STORE_TOKEN, null);
   saveJSON(STORE_VEHICLES, null);
   inflightVin = null;

@@ -69,7 +69,14 @@ Only vehicles registered when the key was issued are available. For a car you ad
 3. It requests `GET /v1/vehicles/{vin}/status` for the doors and `GET /v1/vehicles/{vin}/batteries` for charging, both at the same time.
 4. It reduces the results to a few values (`LOCKED`, `PLUGGED`, `CHARGING`, `SOC`, `REMAIN_MIN`, `DATA_TIME`, …) and sends them to the watch.
 
-The API has no refresh token, so the cached token is renewed and the request retried once when the API reports it as expired or invalid.
+The API has no refresh token. Before each authorized request, the app checks the
+cached access token's JWT `exp` timestamp and renews it if it has expired or has
+less than one minute remaining. Missing or unreadable expiry claims also cause
+renewal. It uses the token's actual expiry rather than assuming a fixed lifetime.
+Parallel requests share a single token renewal. If the API still rejects a cached
+token as unauthorized, forbidden, or invalid, the request is retried once with a
+renewed token; a persistent rejection is shown as an error. A rejection of a token
+that was just issued is shown right away, since a new login would not change it.
 
 **Settings and secrets.**
 - The settings page is built with [Clay](https://github.com/pebble-dev/clay), with automatic event handling turned off.
@@ -92,6 +99,15 @@ The API has no refresh token, so the cached token is renewed and the request ret
 ```
 
 ## Build and run
+
+Run the phone-side token lifecycle regression tests with Node.js:
+
+```bash
+node --test tests/token-refresh.test.cjs
+```
+
+These tests simulate expiry across app restarts, concurrent renewals, rejected
+tokens, and failures without real credentials or API calls.
 
 You need the [Pebble SDK](https://developer.repebble.com) (`pebble` tool with SDK 4.33 or newer).
 

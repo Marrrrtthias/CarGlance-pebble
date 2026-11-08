@@ -25,6 +25,16 @@
     "capabilities": [
       "configurable"
     ],
+    "usesPermissions": [
+      {
+        "name": "Internet",
+        "parameters": {
+          "domains": [
+            "api.pleos.ai"
+          ]
+        }
+      }
+    ],
     "messageKeys": [
       "REFRESH",
       "STATUS",
