@@ -157,8 +157,10 @@ function fetchToken(cfg, cb) {
   request('POST', '/v1/auth/personal-token', cfg, null,
     { clientId: cfg.clientId, clientSecret: cfg.clientSecret },
     function (err, data) {
+      // Settings changed meanwhile: drop the response without notifying the
+      // waiters. webviewclosed already started a refresh for the new settings.
       if (flight.generation !== configGeneration) {
-        finish(new ApiError('Settings changed. Please refresh.'));
+        if (tokenRequest === flight) tokenRequest = null;
         return;
       }
       if (err) {
@@ -190,14 +192,14 @@ function getToken(cfg, rejectedToken, cb) {
 
 // Refresh before sending an expired token. Still retry once if the server
 // rejects an otherwise unexpired token (revocation, permissions, clock skew).
+// Responses that arrive after a settings change are dropped without calling
+// cb: the refresh started by webviewclosed reports for the new settings, and
+// a stale result must not overwrite it or clear its inflightVin.
 function authGet(cfg, path, cb) {
   var generation = configGeneration;
   function withToken(token, retry) {
     request('GET', path, cfg, token, null, function (err, data) {
-      if (generation !== configGeneration) {
-        cb(new ApiError('Settings changed. Please refresh.'));
-        return;
-      }
+      if (generation !== configGeneration) return;
       if (err && retry && isTokenError(err)) {
         getToken(cfg, token, function (tokErr, fresh) {
           if (tokErr) {

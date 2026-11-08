@@ -14,6 +14,7 @@ const fresh = jwt(now / 1000 + 7200);
 
 function runtime(storage = new Map(), time = now) {
   const requests = [];
+  const sent = [];
   const events = {};
   function Clay() { this.getSettings = response => JSON.parse(response); }
   const context = vm.createContext({
@@ -26,7 +27,7 @@ function runtime(storage = new Map(), time = now) {
     },
     Pebble: {
       addEventListener: (name, callback) => { events[name] = callback; },
-      sendAppMessage: (payload, success) => success()
+      sendAppMessage: (payload, success) => { sent.push(payload); success(); }
     }
   });
   vm.runInContext(source, context);
@@ -35,7 +36,7 @@ function runtime(storage = new Map(), time = now) {
   context.request = (method, endpoint, config, token, body, callback) => {
     requests.push({ method, endpoint, token, callback });
   };
-  return { context, storage, requests, events };
+  return { context, storage, requests, sent, events };
 }
 
 function stored(token) {
@@ -165,12 +166,45 @@ test('server and transport errors do not trigger token renewal', () => {
 
 test('a settings change prevents an older authentication response from overwriting the new token', () => {
   const app = runtime();
-  let oldError;
-  app.context.authGet(cfg, '/status', error => { oldError = error; });
+  let oldCalled = false;
+  app.context.authGet(cfg, '/status', () => { oldCalled = true; });
   const oldPost = take(app, 'POST');
   app.events.webviewclosed({ response: JSON.stringify({ clientId: { value: 'demo' } }) });
   app.storage.set('bp-token', JSON.stringify(fresh));
   oldPost.callback(null, { accessToken: valid });
   assert.equal(JSON.parse(app.storage.get('bp-token')), fresh);
-  assert.ok(oldError);
+  assert.equal(oldCalled, false);
+  // Only the new settings' messages reach the watch: loading, then demo data.
+  assert.deepEqual(app.sent.map(payload => payload.STATUS), ['loading', 'ok']);
+});
+
+test('responses from before a settings change neither reach the watch nor end the new refresh', () => {
+  const vin = 'KMH00000000000001';
+  const settings = { brand: { value: 'kia' }, clientId: { value: 'test-id' }, clientSecret: { value: 'test-secret' } };
+  const storage = stored(valid);
+  storage.set('bp-config', JSON.stringify({ brand: 'kia', clientId: 'test-id', clientSecret: 'test-secret' }));
+  storage.set('bp-vehicles', JSON.stringify([{ vin, name: 'Car' }]));
+  const app = runtime(storage);
+  app.events.ready();
+  const oldStatus = take(app, 'GET');
+  const oldBattery = take(app, 'GET');
+
+  // Saving unchanged settings starts a new refresh for the same car.
+  app.events.webviewclosed({ response: JSON.stringify(settings) });
+  take(app, 'POST').callback(null, { accessToken: fresh });
+  take(app, 'GET').callback(null, { vehicles: [{ vin, nickname: 'Car' }] });
+  const newStatus = take(app, 'GET');
+  const newBattery = take(app, 'GET');
+  assert.equal(app.context.inflightVin, vin);
+
+  oldStatus.callback(new app.context.ApiError('Forbidden', null, 403));
+  oldBattery.callback(null, { charge: {} });
+  assert.equal(app.requests.length, 0, 'stale responses must not trigger a retry');
+  assert.equal(app.context.inflightVin, vin, 'stale responses must not end the new refresh');
+  assert.deepEqual(app.sent.map(payload => payload.STATUS), ['loading']);
+
+  newStatus.callback(null, { doors: [] });
+  newBattery.callback(null, { charge: { stateOfCharge: 50 } });
+  assert.deepEqual(app.sent.map(payload => payload.STATUS), ['loading', 'ok']);
+  assert.equal(app.sent[1].SOC, 50);
 });
