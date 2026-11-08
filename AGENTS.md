@@ -6,8 +6,7 @@ CarGlance is a Pebble watchapp (Pebble Time 2 / `emery` only) showing door lock,
 
 ## Commands
 
-Requires the Pebble SDK (`pebble` tool, SDK 4.33+). Run the token lifecycle
-regression tests with `node --test tests/token-refresh.test.cjs`. There is no linter.
+Requires the Pebble SDK (`pebble` tool, SDK 4.33+). There is no test suite or linter.
 
 ```bash
 pebble package install @rebble/clay        # once, installs dependencies
@@ -24,7 +23,7 @@ Enter `demo` as the Client ID in settings to get sample data without an account.
 Two JavaScript runtimes connected by AppMessage:
 
 - **Watch — `src/embeddedjs/main.js`** (Alloy: Moddable XS + Poco). Pure renderer: draws everything with Poco using system fonts and icons built from primitives (no image resources). Never touches the network; holds a `state` object (`status`: `loading` | `ok` | `nocreds` | `error`), redraws on incoming messages, and sends `REFRESH` on Select button, touch on the top-left refresh icon, or a 10-minute timer. Modern JS (ES modules, `const`/`let`) is fine here. `src/c/mdbl.c` and `manifest.json` are standard Alloy boilerplate.
-- **Phone — `src/pkjs/index.js`** (PebbleKit JS). Written in ES5 style (`var`, callbacks, `XMLHttpRequest`); keep it that way. Flow per refresh: personal token → vehicle lookup via `/v1/vehicles/consent` (cached) → `/status` and `/batteries` in parallel → reduced to a flat payload sent to the watch. No refresh token exists. Check the JWT expiry with a one-minute margin before reusing a token; concurrent callers share one renewal. Authentication rejections of a cached token trigger one retry, including HTTP 401/403 and `TOKEN_ERRORS`; a just-issued token is not retried. `inflightVin` prevents overlapping refreshes for the same car. Do not log credentials.
+- **Phone — `src/pkjs/index.js`** (PebbleKit JS). Written in ES5 style (`var`, callbacks, `XMLHttpRequest`); keep it that way. Flow per refresh: personal token → vehicle lookup via `/v1/vehicles/consent` (cached) → `/status` and `/batteries` in parallel → reduced to a flat payload sent to the watch. No refresh token exists, so on token error codes (`TOKEN_ERRORS`) the token is refetched and the request retried once. A `busy` flag prevents overlapping refreshes.
 - **Settings — `src/pkjs/config.js`** (Clay, `autoHandleEvents: false`). `webviewclosed` in `index.js` saves settings to `localStorage` and clears the cached token and vehicle. Credentials stay on the phone and are never sent to the watch.
 - **Emulator settings workaround:** `configUrl()` in `index.js` rewrites Clay's HTTP-only S3 proxy URL into a `data:` URI because HTTPS-forcing browsers can't load the proxy. Don't remove it.
 
