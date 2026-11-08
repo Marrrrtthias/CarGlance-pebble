@@ -159,9 +159,14 @@ function formatRemain(min) {
     return h ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m`;
 }
 
-// Age of the car's data, e.g. "5 min ago". dataTime is in epoch seconds.
-function formatAge(dataTime) {
-    const min = Math.max(0, ((Date.now() / 1000 - dataTime) / 60) | 0);
+// Age of the car's data in seconds; dataTime is in epoch seconds.
+function dataAge(dataTime) {
+    return Math.max(0, Date.now() / 1000 - dataTime);
+}
+
+// Formats an age in seconds, e.g. "5 min ago".
+function formatAge(ageS) {
+    const min = (ageS / 60) | 0;
     if (min < 1) return "just now";
     if (min < 60) return `${min} min ago`;
     const h = (min / 60) | 0;
@@ -259,8 +264,8 @@ function drawDashboard() {
     } else if (s.lastError) {
         centerText(fitText(`Update failed: ${s.lastError}`, labelFont, render.width - 12), labelFont, red, 205);
     } else if (s.dataTime >= 0) {
-        const stale = Date.now() / 1000 - s.dataTime > STALE_AFTER_S;
-        centerText(`Car data: ${formatAge(s.dataTime)}`, labelFont, stale ? yellow : gray, 205);
+        const age = dataAge(s.dataTime);
+        centerText(`Car data: ${formatAge(age)}`, labelFont, age > STALE_AFTER_S ? yellow : gray, 205);
     } else {
         centerText("Car data: age unknown", labelFont, gray, 205);
     }
@@ -544,9 +549,11 @@ new Touch({
 });
 
 setInterval(requestRefresh, AUTO_REFRESH_MS);
-// Keep the data's age in the footer current between refreshes.
+// Keep the data's age in the footer current between refreshes. Only redraw
+// when the footer actually shows an age.
 setInterval(() => {
-    if (state.status === "ok" && !refreshing && !state.lastError) draw();
+    if (screenMode === "main" && state.status === "ok" && !refreshing &&
+        !state.lastError && state.dataTime >= 0) draw();
 }, AGE_TICK_MS);
 
 draw();
