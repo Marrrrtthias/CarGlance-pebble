@@ -103,7 +103,7 @@ function tokenExpiresAt(token) {
   }
 }
 
-function usableToken(token) {
+function isTokenValid(token) {
   return tokenExpiresAt(token) > Date.now() + TOKEN_EXPIRY_MARGIN_MS;
 }
 
@@ -187,7 +187,7 @@ function fetchToken(cfg, cb) {
 function getToken(cfg, rejectedToken, cb) {
   var cached = loadJSON(STORE_TOKEN);
   // A delayed failure must not delete a newer token another request obtained.
-  if (cached && cached !== rejectedToken && usableToken(cached)) {
+  if (cached && cached !== rejectedToken && isTokenValid(cached)) {
     cb(null, cached, true);
     return;
   }
