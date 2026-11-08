@@ -16,7 +16,11 @@ var STORE_LEGACY_VEHICLE = 'bp-vehicle';
 // Upper bound for the vehicle list sent to the watch.
 var MAX_VEHICLES = 20;
 
-// Error codes that mean "get a new token and try again".
+// Responses that mean "get a new token and try again", by HTTP status and by
+// the API's own `error.code`. 40002-40004 were handled from the start. The API
+// codes 401, 403 and 4011 were added for issue #8 as likely token rejections;
+// no failing response was captured to confirm them.
+var TOKEN_HTTP_STATUSES = [401, 403];
 var TOKEN_ERRORS = [401, 403, 4011, 40002, 40003, 40004];
 var TOKEN_EXPIRY_MARGIN_MS = 60000;
 var tokenRequest = null;
@@ -67,7 +71,7 @@ function ApiError(message, code, httpStatus) {
 
 function isTokenError(err) {
   return err instanceof ApiError &&
-    (err.httpStatus === 401 || err.httpStatus === 403 ||
+    (TOKEN_HTTP_STATUSES.indexOf(err.httpStatus) !== -1 ||
       TOKEN_ERRORS.indexOf(Number(err.code)) !== -1);
 }
 
@@ -76,8 +80,9 @@ function isTokenError(err) {
 // Decode base64url using ES5 primitives.
 function tokenExpiresAt(token) {
   try {
-    if (typeof token !== 'string' || token.split('.').length !== 3) return 0;
-    var encoded = token.split('.')[1];
+    var parts = typeof token === 'string' ? token.split('.') : [];
+    if (parts.length !== 3) return 0;
+    var encoded = parts[1];
     if (!encoded || /[^A-Za-z0-9_-]/.test(encoded) || encoded.length % 4 === 1) return 0;
     var alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
     var bits = 0;
