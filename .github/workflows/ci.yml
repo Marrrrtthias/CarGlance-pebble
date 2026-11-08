@@ -72,8 +72,8 @@ jobs:
         run: pebble build
 
       - name: Upload PBW
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: carglance-pbw
           path: build/*.pbw
+          archive: false
           if-no-files-found: error
