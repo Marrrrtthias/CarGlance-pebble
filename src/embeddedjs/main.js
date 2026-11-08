@@ -9,6 +9,8 @@ import Touch from "embedded:sensor/Touch/pebble";
 
 const AUTO_REFRESH_MS = 10 * 60 * 1000;
 const AGE_TICK_MS = 60 * 1000;
+// How long a failed refresh's error replaces the data's age in the footer.
+const ERROR_SHOW_MS = 5 * 1000;
 // The footer turns yellow once the car's data is older than this.
 const STALE_AFTER_S = 60 * 60;
 
@@ -365,6 +367,21 @@ function num(v, fallback) {
     return typeof v === "number" ? v : fallback;
 }
 
+// Shows a failed refresh's error in the footer for a few seconds, then goes
+// back to the data's age, so the age stays visible while the data gets older.
+let errorTimer;
+function showLastError(error) {
+    const errState = state;
+    errState.lastError = error;
+    if (errorTimer !== undefined) clearTimeout(errorTimer);
+    errorTimer = setTimeout(() => {
+        errorTimer = undefined;
+        if (state !== errState) return; // replaced by newer data meanwhile
+        delete errState.lastError;
+        if (screenMode === "main" && !refreshing) draw();
+    }, ERROR_SHOW_MS);
+}
+
 const message = new Message({
     keys: ["REFRESH", "STATUS", "ERROR", "NAME", "LOCKED", "PLUGGED", "CHARGING",
         "CHARGE_STATUS", "SOC", "REMAIN_MIN", "DATA_TIME", "VEHICLES", "VEHICLE_INDEX",
@@ -399,7 +416,7 @@ const message = new Message({
             refreshing = false;
             // Keep showing the last good data if a later refresh fails.
             if (state.status === "ok" && status === "error") {
-                state.lastError = msg.get("ERROR");
+                showLastError(msg.get("ERROR"));
             } else {
                 // An error keeps the car's name in the header.
                 state = { status, name: status === "error" ? state.name : undefined, error: msg.get("ERROR") };

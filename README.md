@@ -28,7 +28,7 @@ All data is processed locally on your Pebble and phone. Your API credentials are
   - To refresh manually, press **Select** or tap the refresh icon in the top-left corner (on touchscreen watches).
   - A refresh fetches the latest data the Pleos API has. The API can't ask the car for new data: the car uploads it on its own schedule, or when you refresh in the official Hyundai, Kia or Genesis app.
   - So the footer shows how old the car's data is (for example "Car data: 25 min ago"). It turns yellow when the data is more than an hour old.
-  - If a refresh fails, the last good data stays on screen and the footer shows the error.
+  - If a refresh fails, the last good data stays on screen and the footer shows the error for 5 seconds, then goes back to the data's age.
 - **Car picker:** if the account has more than one vehicle, a car icon appears in the top-right corner. Tap it to list the cars by name and the last four digits of the VIN, then tap one to show its status. Up/Down and Select also work in the list, and Back closes it. The choice is remembered.
 - **Settings page** in the Pebble phone app:
   - Step-by-step instructions for getting API credentials.
