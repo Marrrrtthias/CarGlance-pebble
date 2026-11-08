@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.0 – 2026-11-08
+
+- New app icon: the car from the car picker button now appears in the watch's app launcher.
+
 ## 1.0.1 – 2026-11-08
 
 - Bugfix: The app no longer shows an error after not having been used for a while.
