@@ -4,7 +4,7 @@
 //
 // Select (or a tap on the refresh icon) refreshes; Down (or a tap on the car
 // icon) opens the car picker when the account has more than one car.
-import { FONT_KEY } from "pebble-ui/sdk";
+import { FONT_KEY, textLayerStyle } from "pebble-ui/sdk";
 import View from "pebble-ui/View";
 import WindowStack from "pebble-ui/WindowStack";
 import { car, requestRefresh } from "car";
@@ -34,21 +34,14 @@ const LOCK = { locked: 0, unlocked: 1, unknown: 2 };
 const PLUG = { plugged: 0, unplugged: 1 };
 const GLYPH = 36;
 
-// Text positions are where Poco's drawText put them in earlier versions, which
-// is also where Piu draws (pebble-ui's textLayerStyle would add a TextLayer's
-// offsets).
-function textStyle(font, color, horizontal = "left") {
-	return new Style({ font, color, horizontal, vertical: "top" });
-}
-
-const titleStyle = textStyle(FONT_KEY.GOTHIC_24_BOLD, WHITE, "center");
-const labelStyle = textStyle(FONT_KEY.GOTHIC_14, GRAY);
+const titleStyle = textLayerStyle(FONT_KEY.GOTHIC_24_BOLD, WHITE, "center");
+const labelStyle = textLayerStyle(FONT_KEY.GOTHIC_14, GRAY);
 const valueStyles = {};
 for (const name in COLORS)
-	valueStyles[name] = textStyle(FONT_KEY.GOTHIC_24_BOLD, COLORS[name]);
-const footerStyle = textStyle(FONT_KEY.GOTHIC_14, FOOTER_COLORS, "center");
-const bodyStyle = textStyle(FONT_KEY.GOTHIC_18, WHITE, "center");
-const errorStyle = textStyle(FONT_KEY.GOTHIC_24_BOLD, RED, "center");
+	valueStyles[name] = textLayerStyle(FONT_KEY.GOTHIC_24_BOLD, COLORS[name]);
+const footerStyle = textLayerStyle(FONT_KEY.GOTHIC_14, FOOTER_COLORS, "center");
+const bodyStyle = textLayerStyle(FONT_KEY.GOTHIC_18, WHITE, "center");
+const errorStyle = textLayerStyle(FONT_KEY.GOTHIC_24_BOLD, RED, "center");
 
 const headerSkin = new Skin({ fill: BLUE });
 const backgroundSkin = new Skin({ fill: "#000000" });
