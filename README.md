@@ -29,7 +29,7 @@ All data is processed locally on your Pebble and phone. Your API credentials are
   - A refresh fetches the latest data the Pleos API has. The API can't ask the car for new data: the car uploads it on its own schedule, or when you refresh in the official Hyundai, Kia or Genesis app.
   - So the footer shows how old the car's data is (for example "Car data: 25 min ago"). It turns yellow when the data is more than an hour old.
   - If a refresh fails, the last good data stays on screen and the footer shows the error for 5 seconds, then goes back to the data's age.
-- **Car picker:** if the account has more than one vehicle, a car icon appears in the top-right corner. Tap it to list the cars by name and the last four digits of the VIN, then tap one to show its status. Up/Down and Select also work in the list, and Back closes it. The choice is remembered.
+- **Car picker:** if the account has more than one vehicle, a car icon appears in the top-right corner. Tap it or press **Down** to list the cars by name and the last four digits of the VIN, then tap one (or choose it with Up/Down and Select) to show its status. Drag to scroll the list; Back closes it. The choice is remembered.
 - **Settings page** in the Pebble phone app:
   - Step-by-step instructions for getting API credentials.
   - Fields for manufacturer, Client ID and Client Secret.
@@ -51,17 +51,17 @@ Only vehicles registered when the key was issued are available. For a car you ad
 
 ```
 ┌────────────── Watch ──────────────┐  AppMessage  ┌────────── Phone (PebbleKit JS) ─────────┐  HTTPS  ┌──────────────┐
-│ src/embeddedjs/main.js            │ ◄──────────► │ src/pkjs/index.js                       │ ◄─────► │ api.pleos.ai │
-│ Alloy (Moddable XS) + Poco        │   summary /  │ token, vehicle lookup, data mapping     │         └──────────────┘
-│ rendering, buttons, touch, timer  │   REFRESH    │ src/pkjs/config.js (Clay settings page) │
+│ src/embeddedjs/                   │ ◄──────────► │ src/pkjs/index.js                       │ ◄─────► │ api.pleos.ai │
+│ Alloy (Moddable XS) + Piu         │   summary /  │ token, vehicle lookup, data mapping     │         └──────────────┘
+│ pebble-ui windows, buttons, touch │   REFRESH    │ src/pkjs/config.js (Clay settings page) │
 └───────────────────────────────────┘              └─────────────────────────────────────────┘
 ```
 
 **Watch (Alloy).**
 - The watch side is written in JavaScript and runs on the watch's Moddable XS engine.
-- It draws everything with Poco, using system fonts and icons built from basic shapes.
-- It never talks to the network. It shows whatever the phone sends and asks for new data with a `REFRESH` message.
-- `src/c/mdbl.c` is the standard Alloy startup file.
+- Its screens are built with Piu and [pebble-ui](https://github.com/michaelthatsit/pebble-ui), a library of Pebble's native widgets for Alloy, included as a git submodule. pebble-ui provides the window stack (with the system's slide transition and Back handling) and the car picker's menu. The dashboard is a pebble-ui window of its own, drawn with system fonts and small bitmap icons.
+- `car.js` holds the car's state. It never talks to the network: it keeps whatever the phone sends and asks for new data with a `REFRESH` message.
+- `src/c/mdbl.c` is the Alloy startup file. It gives the JavaScript machine the larger memory sizes that Piu needs.
 
 **Phone (PebbleKit JS).** The phone side makes all API calls with `XMLHttpRequest`:
 1. It requests an access token from `POST /v1/auth/personal-token`, using the Client ID, the Client Secret and a `Brand` header.
@@ -83,16 +83,23 @@ that was just issued is shown right away, since a new login would not change it.
 - Your credentials are stored only in the phone app's `localStorage`. They are never sent to the watch, and the phone only uses them to call `api.pleos.ai`.
 - In the emulator, the page is served as a self-contained page, because Clay's old HTTP-only proxy page doesn't load in browsers that force HTTPS.
 
-**Message keys.** The keys are declared in `package.json` under `pebble.messageKeys` and must match the `keys` list in `main.js`.
+**Message keys.** The keys are declared in `package.json` under `pebble.messageKeys` and must match the `keys` list in `car.js`.
 
 ```
-├── package.json             # app metadata, message keys, Clay dependency
+├── package.json             # app metadata, message keys, resources, Clay dependency
 ├── wscript                  # standard Pebble build script
+├── pebble-ui/               # git submodule: Pebble's widgets for Alloy
+├── resources/images/        # launcher icon and dashboard glyphs
+├── tools/make_icons.py      # renders the PNGs in resources/images and store/
 └── src
-    ├── c/mdbl.c             # Alloy startup file
+    ├── c/mdbl.c             # Alloy startup file (machine sizes)
     ├── embeddedjs/
-    │   ├── main.js          # watch UI
-    │   └── manifest.json    # Moddable manifest
+    │   ├── main.js          # application: the window stack
+    │   ├── car.js           # car state, messages to and from the phone
+    │   ├── windows/
+    │   │   ├── dashboard.js # home window
+    │   │   └── picker.js    # car picker
+    │   └── manifest.json    # Moddable manifest: modules and machine sizes
     └── pkjs/
         ├── index.js         # phone-side API client
         └── config.js        # settings page definition
@@ -112,6 +119,7 @@ tokens, and failures without real credentials or API calls.
 You need the [Pebble SDK](https://developer.repebble.com) (`pebble` tool with SDK 4.33 or newer).
 
 ```bash
+git submodule update --init           # once, fetches pebble-ui (or clone with --recurse-submodules)
 pebble package install @rebble/clay   # once, installs dependencies
 ```
 ```bash

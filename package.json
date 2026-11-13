@@ -58,6 +58,36 @@
           "name": "IMAGE_MENU_ICON",
           "file": "images/menu_icon.png",
           "menuIcon": true
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_LOCK",
+          "file": "images/lock.png",
+          "storageFormat": "pbi"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_PLUG",
+          "file": "images/plug.png",
+          "storageFormat": "pbi"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_BOLT",
+          "file": "images/bolt.png",
+          "storageFormat": "pbi"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_REFRESH",
+          "file": "images/refresh.png",
+          "storageFormat": "pbi"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_CAR",
+          "file": "images/car.png",
+          "storageFormat": "pbi"
         }
       ]
     }

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- The watch app is now built on [pebble-ui](https://github.com/michaelthatsit/pebble-ui), Pebble's native widgets for Alloy. The dashboard looks the same; the car picker is now a standard Pebble menu and slides in and out like other Pebble windows.
+- The car picker also opens with the Down button.
+
 ## 1.1.0 – 2026-11-08
 
 - New app icon: the car from the car picker button now appears in the watch's app launcher.
