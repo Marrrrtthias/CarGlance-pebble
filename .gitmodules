@@ -1,0 +1,3 @@
+[submodule "pebble-ui"]
+	path = pebble-ui
+	url = https://github.com/michaelthatsit/pebble-ui.git

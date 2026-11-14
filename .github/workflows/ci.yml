@@ -44,6 +44,9 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
+      - name: Fetch pebble-ui submodule
+        run: git submodule update --init --depth 1
+
       - name: Install pebble-tool
         run: uv tool install --python 3.13 "pebble-tool==${PEBBLE_TOOL_VERSION}"
 
