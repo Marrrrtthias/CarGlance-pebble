@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Render CarGlance's icons: the launcher and store icons (a white car on the
-header blue) and the dashboard glyphs. The shapes are those the dashboard drew
-with Poco before it moved to Piu, which can't draw circles.
+header blue, the shapes the dashboard drew with Poco before it moved to Piu,
+which can't draw circles) and the dashboard glyphs (the paths of the design
+mockups).
 
 Writes resources/images/menu_icon.png (25x25, launcher icon bundled in the
 .pbw), store/icon_48.png, store/icon_144.png (app store listing) and the
-glyph sheets resources/images/{lock,plug,bolt,refresh,car}.png.
+glyph sheets resources/images/{lock,plug,bolt,refresh,car,chips}.png.
 No dependencies beyond the Python standard library.
 
     python3 tools/make_icons.py
@@ -129,7 +130,8 @@ def write_png(path, pixels):
 # variants are stacked vertically in one sheet and picked in the watch app as
 # Piu skin states (src/embeddedjs/windows/dashboard.js).
 
-GLYPH = 36
+GLYPH = 36  # dashboard glyphs: one 36 px square per state
+CHIP = 14   # the small icons in the facts strip and the warning bar
 
 GREEN = (0, 170, 85)
 RED = (255, 85, 85)
@@ -137,13 +139,17 @@ YELLOW = (255, 170, 0)
 WHITE_RGB = (255, 255, 255)
 GRAY = (170, 170, 170)
 DARK_GRAY = (85, 85, 85)
+LIGHT_BLUE = (85, 170, 255)
+BLACK = (0, 0, 0)
+
+# The shapes below take SVG coordinates (continuous, y down), so the paths of
+# the design mockups carry over as they are.
 
 
-def line(x0, y0, x1, y1, width):
-    """A stroke of the given width between pixel centers, with round caps."""
-    x0, y0, x1, y1 = x0 + 0.5, y0 + 0.5, x1 + 0.5, y1 + 0.5
+def seg(x0, y0, x1, y1, width):
+    """A stroke of the given width with round caps."""
     dx, dy = x1 - x0, y1 - y0
-    length2 = dx * dx + dy * dy
+    length2 = dx * dx + dy * dy or 1e-9
     r2 = (width / 2) ** 2
 
     def inside(px, py):
@@ -153,67 +159,139 @@ def line(x0, y0, x1, y1, width):
     return inside
 
 
-def sector(cx, cy, r, start, end):
-    """A filled circle limited to angles start..end, in degrees clockwise
-    from 12 o'clock."""
-    disc = circle(cx, cy, r)
-    cx, cy = cx + 0.5, cy + 0.5
+def polyline(points, width, closed=False):
+    pts = points + [points[0]] if closed else points
+    segs = [seg(*pts[i], *pts[i + 1], width) for i in range(len(pts) - 1)]
+    return lambda px, py: any(s(px, py) for s in segs)
 
+
+def polygon(points):
+    """A filled polygon (even-odd rule)."""
     def inside(px, py):
-        angle = math.degrees(math.atan2(px - cx, cy - py)) % 360
-        return disc(px, py) and start <= angle <= end
+        hit = False
+        j = len(points) - 1
+        for i in range(len(points)):
+            xi, yi = points[i]
+            xj, yj = points[j]
+            if (yi > py) != (yj > py) and px < (xj - xi) * (py - yi) / (yj - yi) + xi:
+                hit = not hit
+            j = i
+        return hit
     return inside
 
 
+def angle_of(px, py, cx, cy):
+    """Degrees clockwise from 12 o'clock."""
+    return math.degrees(math.atan2(px - cx, cy - py)) % 360
+
+
+def arc(cx, cy, r, width, start, end):
+    """A stroked arc from start to end degrees, clockwise from 12 o'clock."""
+    def inside(px, py):
+        if abs(math.hypot(px - cx, py - cy) - r) > width / 2:
+            return False
+        a = angle_of(px, py, cx, cy)
+        return start <= a <= end if start <= end else a >= start or a <= end
+    return inside
+
+
+def disc(cx, cy, r):
+    return lambda px, py: (px - cx) ** 2 + (py - cy) ** 2 <= r * r
+
+
+def ellipse(cx, cy, rx, ry, rotation):
+    c, s = math.cos(math.radians(rotation)), math.sin(math.radians(rotation))
+
+    def inside(px, py):
+        x, y = px - cx, py - cy
+        u, v = x * c + y * s, -x * s + y * c
+        return (u / rx) ** 2 + (v / ry) ** 2 <= 1
+    return inside
+
+
+def placed(shapes, ox, oy, scale=1.0):
+    """Moves (and scales) shapes drawn in their own coordinates to ox, oy."""
+    def move(shape):
+        return lambda px, py: shape((px - ox) / scale, (py - oy) / scale)
+    return [(move(shape), paint) for shape, paint in shapes]
+
+
+# Lock, 26 x 30. The open shackle keeps its left leg and stops short of the
+# right one.
 def lock(locked):
-    cx = 18
-    shackle_y = 13 if locked else 8
-    shapes = [(circle(cx, shackle_y, 10), "fg"), (circle(cx, shackle_y, 5), "cut")]
-    if not locked:
-        # Cut the left leg so it reads as an open shackle.
-        shapes.append((rect(cx - 10, shackle_y, 6, 16 - shackle_y), "cut"))
-    return shapes + [
-        (rect(6, 15, 24, 19), "fg"),       # body
-        (circle(cx, 23, 3), "cut"),        # keyhole
-        (rect(cx - 1, 24, 3, 6), "cut"),
+    shackle = [(seg(7, 14, 7, 9, 3.5), "fg")]
+    if locked:
+        shackle += [(arc(13, 9, 6, 3.5, 270, 90), "fg"), (seg(19, 9, 19, 14, 3.5), "fg")]
+    else:
+        shackle += [(arc(13, 9, 6, 3.5, 270, 68), "fg")]
+    return shackle + [
+        (round_rect(3, 13, 20, 15, 2), "fg"),
+        (rect(11.5, 18, 3, 5), "cut"),     # keyhole
     ]
 
 
-BOLT = [
-    (line(24, 2, 12, 19, 4), "fg"),
-    (line(12, 19, 24, 17, 4), "fg"),
-    (line(24, 17, 12, 34, 4), "fg"),
-]
+# Bolt outline, 26 x 32.
+BOLT = [(polyline([(16, 2), (6, 18), (15, 18), (11, 30), (21, 13), (12, 13)], 3, closed=True), "fg")]
 
+# Plug outline, 26 x 30: prongs, a rounded head and the cable.
 PLUG = [
-    (rect(11, 2, 3, 9), "fg"),                # prongs
-    (rect(23, 2, 3, 9), "fg"),
-    (round_rect(7, 10, 23, 14, 4), "fg"),
-    (rect(16, 24, 5, 11), "fg"),              # cable
+    (seg(9, 2, 9, 9, 3), "fg"),
+    (seg(17, 2, 17, 9, 3), "fg"),
+    (seg(5, 9, 21, 9, 3), "fg"),
+    (seg(21, 9, 21, 14, 3), "fg"),
+    (seg(5, 9, 5, 14, 3), "fg"),
+    (arc(13, 14, 8, 3, 90, 270), "fg"),
+    (seg(13, 22, 13, 28, 3), "fg"),
 ]
 
-# Circular arrow, its arrowhead at 12 o'clock pointing clockwise.
+# Circular arrow in a 24 x 24 box: an arc open towards the top right, its
+# arrowhead a corner at the arc's end.
 REFRESH = [
-    (sector(18, 18, 11, 70, 360), "fg"),
-    (circle(18, 18, 7), "cut"),
-    (line(23, 9, 17, 3, 3), "fg"),
-    (line(23, 9, 17, 15, 3), "fg"),
+    (arc(12, 12, 8, 2.6, 135, 90), "fg"),
+    (seg(20, 3, 20, 8, 2.6), "fg"),
+    (seg(20, 8, 15, 8, 2.6), "fg"),
+]
+
+# Car from the front, 26 x 22, windscreen and headlights cut out.
+CAR_FRONT = [
+    (polygon([(5, 9), (7.5, 3), (18.5, 3), (21, 9), (23, 9), (23, 17), (21, 17), (21, 20), (18, 20),
+              (18, 17), (8, 17), (8, 20), (5, 20), (5, 17), (3, 17), (3, 9)]), "fg"),
+    (rect(8.5, 5, 9, 4), "cut"),
+    (disc(7, 13, 1.6), "cut"),
+    (disc(19, 13, 1.6), "cut"),
+]
+
+# Small icons, 14 x 14.
+THERMOMETER = placed([
+    (arc(5, 2, 2, 1.6, 270, 90), "fg"),
+    (seg(7, 2, 7, 8.5, 1.6), "fg"),
+    (seg(3, 2, 3, 8.5, 1.6), "fg"),
+    (arc(5, 11, 3.2, 1.6, 38.7, 321.3), "fg"),
+], 2, 0)
+
+FAN = [(disc(7, 7, 1.3), "fg")] + [
+    (ellipse(7 + 3.4 * math.sin(math.radians(a)), 7 - 3.4 * math.cos(math.radians(a)), 1.6, 2.9, a + 25), "fg")
+    for a in (0, 90, 180, 270)
+]
+
+ODOMETER = placed([
+    (arc(7, 7.71, 5.5, 1.6, 245.4, 114.6), "fg"),
+    (seg(7, 8, 9.5, 5, 1.6), "fg"),
+], 0, 1)
+
+WARNING = [
+    (polygon([(7, 1), (13, 12), (1, 12)]), "fg"),
+    (rect(6.3, 4.5, 1.4, 4), "cut"),
+    (rect(6.3, 9.3, 1.4, 1.4), "cut"),
 ]
 
 
-def car_glyph():
-    # The launcher car (CAR above) centered on 18, 17, its windows cut out.
-    def moved(shape):
-        return lambda px, py: shape(px - 18, py - 17)
-    return [(moved(shape), "fg" if paint == "fg" else "cut") for shape, paint in CAR]
-
-
-def render_glyph(shapes, ss=8):
-    """Coverage (0..1) per pixel of a GLYPH x GLYPH box."""
+def render_glyph(shapes, size, ss=8):
+    """Coverage (0..1) per pixel of a size x size box."""
     rows = []
-    for y in range(GLYPH):
+    for y in range(size):
         row = []
-        for x in range(GLYPH):
+        for x in range(size):
             hits = 0
             for sy in range(ss):
                 for sx in range(ss):
@@ -228,27 +306,50 @@ def render_glyph(shapes, ss=8):
     return rows
 
 
-def sheet(*variants):
-    """Stacks (shapes, color) variants into one image. Alpha is quantized to
-    the watch's four levels."""
+def sheet(*variants, size=GLYPH):
+    """Stacks (shapes, color) variants into one image, at most four (Piu
+    reaches only states 0 to 3 of a skin). Alpha is quantized to the watch's
+    four levels."""
     pixels = []
     for shapes, color in variants:
-        for row in render_glyph(shapes):
+        for row in render_glyph(shapes, size):
             pixels.append([color + (round(c * 3) * 85,) if c else CLEAR for c in row])
     return pixels
 
 
+def columns(*sheets):
+    """Puts sheets side by side, padding the shorter ones with transparency."""
+    height = max(len(sh) for sh in sheets)
+    return [
+        [px for sh in sheets for px in (sh[y] if y < len(sh) else [CLEAR] * len(sh[0]))]
+        for y in range(height)
+    ]
+
+
 if __name__ == "__main__":
     images = os.path.join(ROOT, "resources/images")
+    # Row glyphs sit where the mockups put them in the 36 px box, which the
+    # dashboard draws 4 px below a row's top at x 12.
+    lock_on, lock_off = placed(lock(True), 1, 0), placed(lock(False), 1, 0)
     # States: locked, unlocked, unknown (the closed lock, dimmed).
     write_png(os.path.join(images, "lock.png"), sheet(
-        (lock(True), GREEN), (lock(False), RED), (lock(True), DARK_GRAY)))
+        (lock_on, GREEN), (lock_off, RED), (lock_on, DARK_GRAY)))
     # States: plugged in, not plugged in or unknown.
-    write_png(os.path.join(images, "plug.png"), sheet((PLUG, WHITE_RGB), (PLUG, DARK_GRAY)))
-    write_png(os.path.join(images, "bolt.png"), sheet((BOLT, YELLOW)))
+    plug = placed(PLUG, 1, -1)
+    write_png(os.path.join(images, "plug.png"), sheet((plug, WHITE_RGB), (plug, GRAY)))
+    write_png(os.path.join(images, "bolt.png"), sheet((placed(BOLT, 1, -2), YELLOW)))
+    # Header glyphs: the refresh arrow at the left edge, the car right-aligned.
     # States: idle, refreshing.
-    write_png(os.path.join(images, "refresh.png"), sheet((REFRESH, WHITE_RGB), (REFRESH, GRAY)))
-    write_png(os.path.join(images, "car.png"), sheet((car_glyph(), WHITE_RGB)))
+    refresh = placed(REFRESH, 8, 7, 22 / 24)
+    write_png(os.path.join(images, "refresh.png"), sheet((refresh, WHITE_RGB), (refresh, GRAY)))
+    write_png(os.path.join(images, "car.png"), sheet((placed(CAR_FRONT, 2, 8), WHITE_RGB)))
+    # The facts strip and the warning bar, in two columns (Piu variants):
+    # Piu reaches only four states per skin. Column 0: thermometer, fan
+    # (climate on), fan (climate off), odometer; column 1: warning (black on
+    # the yellow bar).
+    write_png(os.path.join(images, "chips.png"), columns(
+        sheet((THERMOMETER, GRAY), (FAN, LIGHT_BLUE), (FAN, GRAY), (ODOMETER, GRAY), size=CHIP),
+        sheet((WARNING, BLACK), size=CHIP)))
 
     write_png(os.path.join(ROOT, "resources/images/menu_icon.png"), render(
         25, CAR_PIXEL_W / 25, 0.16, 8, False, (CAR_PIXEL, CAR_PIXEL_W, CAR_PIXEL_CX, CAR_PIXEL_CY)))

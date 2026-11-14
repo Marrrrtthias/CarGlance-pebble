@@ -14,8 +14,9 @@ var STORE_SELECTED = 'bp-selected';
 var STORE_LEGACY_VEHICLE = 'bp-vehicle';
 
 // Upper bounds for the vehicle list sent to the watch. The watch's inbox is
-// 1 kB (input in src/embeddedjs/car.js), and a message also carries the status
-// fields or an error, so the list gets at most VEHICLES_MAX_BYTES of it
+// 1.5 kB (input in src/embeddedjs/car.js), and a message also carries the
+// status fields and the warnings (MAX_WARNINGS_BYTES), so the list gets at
+// most VEHICLES_MAX_BYTES of it
 // (UTF-8): 20 ASCII names fit, fewer with multibyte names. Cars past the limit
 // are left out of the picker.
 var MAX_VEHICLES = 20;
@@ -244,7 +245,8 @@ function authGet(cfg, path, cb) {
 
 var DEMO_VEHICLES = [
   { vin: 'DEMO0000000001234', name: 'IONIQ 5 (demo)' },
-  { vin: 'DEMO0000000005678', name: 'KONA Electric (demo)' }
+  { vin: 'DEMO0000000005678', name: 'KONA Electric (demo)' },
+  { vin: 'DEMO0000000009012', name: 'IONIQ 6 (demo)' }
 ];
 
 // Returns the cached vehicle list, fetching it once per set of credentials.
@@ -340,18 +342,164 @@ function vehicleFields(vehicles, index) {
   return { VEHICLES: list, VEHICLE_INDEX: index };
 }
 
-function buildPayload(vehicle, status, battery) {
+function isNumber(v) {
+  return typeof v === 'number' && isFinite(v);
+}
+
+// 48213 -> "48,213"
+function formatNumber(n) {
+  return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+// What else is open next to the doors, for the doors label: "trunk open",
+// "hood, trunk open", "all closed" or '' when unknown.
+function openingsNote(status, locked) {
+  if (!status) return '';
+  var open = ['hood', 'trunk', 'sunroof'].filter(function (part) {
+    return status[part] === 'open';
+  });
+  if (open.length) return open.join(', ') + ' open';
+  return locked === 0 || locked === 1 ? 'all closed' : '';
+}
+
+// The charge limit that applies: DC while fast charging, AC otherwise.
+function targetSoc(charge) {
+  var target = charge.targetStateOfCharge || {};
+  var value = charge.status === 'fastCharging' ? target.quick : target.standard;
+  return isNumber(value) && value > 0 && value <= 100 ? Math.round(value) : -1;
+}
+
+var DISTANCE_UNITS = { km: 'km', miles: 'mi', mile: 'mi' };
+
+// Range from /powertrains: the EV value if there is one, else the first valid.
+function rangeText(powertrain) {
+  var list = (powertrain && powertrain.distanceToEmpties) || [];
+  var pick = null;
+  list.forEach(function (d) {
+    if (d && DISTANCE_UNITS[d.unit] && isFinite(parseFloat(d.value)) && (!pick || d.type === 'EV')) {
+      pick = d;
+    }
+  });
+  return pick ? formatNumber(parseFloat(pick.value)) + ' ' + DISTANCE_UNITS[pick.unit] : '';
+}
+
+// Odometer from /driving, in km or miles.
+function odometerText(driving) {
+  var odo = driving && driving.odometer;
+  if (!odo || !isNumber(odo.value)) return '';
+  if (DISTANCE_UNITS[odo.unit]) return formatNumber(odo.value) + ' ' + DISTANCE_UNITS[odo.unit];
+  if (odo.unit === 'meter') return formatNumber(odo.value / 1000) + ' km';
+  if (odo.unit === 'feet') return formatNumber(odo.value / 5280) + ' mi';
+  return '';
+}
+
+// 21.5 -> "21.5°", to the half degree.
+function degrees(t) {
+  return String(Math.round(t.value * 2) / 2) + '°';
+}
+
+function temperatureText(t) {
+  if (!t || !isNumber(t.value) || (t.unit !== 'C' && t.unit !== 'F')) return '';
+  return Math.round(t.value) + '°' + t.unit;
+}
+
+// Climate for the facts strip: "21.5° auto", "On" or "Off"; on is 1, 0 or -1.
+function climate(status) {
+  var cc = status && status.climateControl;
+  if (!cc || cc.mode === 'error' || (cc.status !== 'on' && cc.status !== 'off')) {
+    return { text: '', on: -1 };
+  }
+  if (cc.status === 'off') return { text: 'Off', on: 0 };
+  var t = cc.temperature;
+  var text = t && isNumber(t.value) ? degrees(t) : 'On';
+  return { text: cc.mode === 'auto' ? text + ' auto' : text, on: 1 };
+}
+
+// Tire pressure as the API encodes it: psi as is, kPa in steps of 5, bar in
+// tenths; 255 means invalid.
+function tirePressure(status, row, side) {
+  var tire = status.tire && status.tire[row];
+  var v = tire && tire[side];
+  if (!isNumber(v) || v < 0 || v > 254) return '';
+  if (tire.unit === 'psi') return v + ' psi';
+  if (tire.unit === 'kpa') return v * 5 + ' kPa';
+  if (tire.unit === 'bar') return (v / 10).toFixed(1) + ' bar';
+  return '';
+}
+
+var TIRES = {
+  tirePressureFrontLeft: ['front left', 0, 'left'],
+  tirePressureFrontRight: ['front right', 0, 'right'],
+  tirePressureRearLeft: ['rear left', 1, 'left'],
+  tirePressureRearRight: ['rear right', 1, 'right']
+};
+
+// Title and detail of each warning token of /status.
+var WARNINGS = {
+  lowFuel: ['Fuel low', 'Refuel soon'],
+  smartKeyBattery: ['Key battery low', 'Replace the key battery'],
+  washFluid: ['Washer fluid low', 'Top up soon'],
+  brakeOil: ['Brake fluid low', 'Have it checked'],
+  engineOil: ['Engine oil low', 'Have it checked'],
+  tirePressureLow: ['Tire pressure low', 'Check all tires'],
+  frontHeadLamp: ['Bulb failure', 'Headlamp'],
+  frontLeftTurnSignal: ['Bulb failure', 'Front left turn signal'],
+  frontRightTurnSignal: ['Bulb failure', 'Front right turn signal'],
+  rearLeftStopLamp: ['Bulb failure', 'Rear left brake light'],
+  rearRightStopLamp: ['Bulb failure', 'Rear right brake light'],
+  rearLeftTurnSignal: ['Bulb failure', 'Rear left turn signal'],
+  rearRightTurnSignal: ['Bulb failure', 'Rear right turn signal']
+};
+
+// Longest WARNINGS text sent in UTF-8 bytes, so that it fits the watch's
+// 1.5 kB inbox next to the car list. Warnings beyond it are left out.
+var MAX_WARNINGS_BYTES = 400;
+
+// The car's warnings for the watch: one "title<TAB>detail" entry per line.
+function warningsText(status) {
+  var lines = [];
+  var length = 0;
+  ((status && status.warnings) || []).forEach(function (token) {
+    var tire = TIRES[token];
+    var entry;
+    if (tire) {
+      entry = ['Low tire: ' + tire[0], tirePressure(status, tire[1], tire[2]) || 'Check the pressure'];
+    } else {
+      entry = WARNINGS[token] || ['Car warning', String(token).substring(0, 30)];
+    }
+    var line = entry.join('\t');
+    var size = utf8Length(line) + (lines.length ? 1 : 0);
+    if (length + size > MAX_WARNINGS_BYTES) return;
+    lines.push(line);
+    length += size;
+  });
+  return lines.join('\n');
+}
+
+// status and battery decide whether the refresh worked; powertrain (range)
+// and driving (odometer) are extras that may be missing.
+function buildPayload(vehicle, status, battery, powertrain, driving) {
   var charge = (battery && battery.charge) || {};
   var soc = typeof charge.stateOfCharge === 'number' ? Math.round(charge.stateOfCharge) : -1;
+  var locked = status ? lockState(status) : -1;
+  var cc = climate(status);
   return {
     STATUS: 'ok',
     NAME: String(vehicle.name).substring(0, NAME_MAX),
-    LOCKED: status ? lockState(status) : -1,
+    LOCKED: locked,
+    DOORS_NOTE: openingsNote(status, locked),
     PLUGGED: charge.plugin === 'connected' ? 1 : (charge.plugin === 'disconnected' ? 0 : -1),
     CHARGING: charge.charging ? 1 : 0,
     CHARGE_STATUS: charge.status || '',
     SOC: soc,
+    TARGET_SOC: targetSoc(charge),
     REMAIN_MIN: typeof charge.remainTime === 'number' ? charge.remainTime : 0,
+    RANGE: rangeText(powertrain),
+    TEMP: temperatureText(status && status.outsideTemperature),
+    CLIMATE: cc.text,
+    CLIMATE_ON: cc.on,
+    ODOMETER: odometerText(driving),
+    WARNINGS: warningsText(status),
     DATA_TIME: dataTime(battery && battery.timestamp, status && status.timestamp)
   };
 }
@@ -359,17 +507,53 @@ function buildPayload(vehicle, status, battery) {
 function demoPayload(index) {
   // Sample data ages: fresh-ish for the first car, stale for the second.
   function ago(min) { return new Date(Date.now() - min * 60 * 1000).toISOString(); }
-  if (index === 1) {
-    return buildPayload(DEMO_VEHICLES[1],
-      { doors: [{ left: 'unlocked', right: 'locked' }, { left: 'locked', right: 'locked' }] },
-      { charge: { plugin: 'disconnected', charging: false, stateOfCharge: 18 }, timestamp: ago(180) });
+  function km(range, odometer) {
+    return [
+      { distanceToEmpties: [{ type: 'EV', value: String(range), unit: 'km' }] },
+      { odometer: { value: odometer, unit: 'km' } }
+    ];
   }
-  return buildPayload(DEMO_VEHICLES[0],
-    { doors: [{ left: 'locked', right: 'locked' }, { left: 'locked', right: 'locked' }] },
-    {
-      charge: { plugin: 'connected', status: 'charging', charging: true, stateOfCharge: 73.4, remainTime: 95 },
-      timestamp: ago(7)
-    });
+  var locked = [{ left: 'locked', right: 'locked' }, { left: 'locked', right: 'locked' }];
+  var extras;
+  if (index === 1) {
+    // Unlocked, trunk open, low battery and one warning.
+    extras = km(71, 52904);
+    return buildPayload(DEMO_VEHICLES[1], {
+      doors: [{ left: 'closed', right: 'locked' }, { left: 'locked', right: 'locked' }],
+      trunk: 'open',
+      tire: [{ left: 25, right: 25, unit: 'bar' }, { left: 19, right: 24, unit: 'bar' }],
+      warnings: ['tirePressureRearLeft'],
+      outsideTemperature: { value: 3, unit: 'C' },
+      climateControl: { mode: 'off', status: 'off' }
+    }, {
+      charge: { plugin: 'disconnected', charging: false, stateOfCharge: 18 }, timestamp: ago(180)
+    }, extras[0], extras[1]);
+  }
+  if (index === 2) {
+    // Plugged in at the charge limit, several warnings.
+    extras = km(226, 48377);
+    return buildPayload(DEMO_VEHICLES[2], {
+      doors: locked, trunk: 'closed', hood: 'closed',
+      warnings: ['washFluid', 'smartKeyBattery', 'rearLeftTurnSignal'],
+      outsideTemperature: { value: 12, unit: 'C' },
+      climateControl: { mode: 'off', status: 'off' }
+    }, {
+      charge: { plugin: 'connected', status: 'notCharging', charging: false, stateOfCharge: 54, targetStateOfCharge: { standard: 80, quick: 90 } },
+      timestamp: ago(12)
+    }, extras[0], extras[1]);
+  }
+  extras = km(312, 48213);
+  return buildPayload(DEMO_VEHICLES[0], {
+    doors: locked, trunk: 'closed', hood: 'closed', sunroof: 'closed',
+    outsideTemperature: { value: 8.2, unit: 'C' },
+    climateControl: { mode: 'auto', status: 'on', temperature: { value: 21, unit: 'C' } }
+  }, {
+    charge: {
+      plugin: 'connected', status: 'charging', charging: true, stateOfCharge: 73.4, remainTime: 95,
+      targetStateOfCharge: { standard: 80, quick: 90 }
+    },
+    timestamp: ago(7)
+  }, extras[0], extras[1]);
 }
 
 function merge(a, b) {
@@ -390,6 +574,30 @@ function send(payload) {
 
 function sendError(msg, extra) {
   send(merge({ STATUS: 'error', ERROR: String(msg).substring(0, 60) }, extra || {}));
+}
+
+// Endpoints for extras (range, odometer) the API refused with 403 or 404 for
+// the current settings. A refused extra would otherwise renew the token on
+// every refresh (403 counts as a rejected token) and fail again.
+var refusedExtras = {};
+var refusedGeneration = 0;
+
+function extraGet(cfg, path, cb) {
+  if (refusedGeneration !== configGeneration) {
+    refusedExtras = {};
+    refusedGeneration = configGeneration;
+  }
+  if (refusedExtras[path]) {
+    cb(new ApiError('Not available'));
+    return;
+  }
+  var generation = configGeneration;
+  authGet(cfg, path, function (err, data) {
+    if (err && generation === configGeneration && (err.httpStatus === 403 || err.httpStatus === 404)) {
+      refusedExtras[path] = true;
+    }
+    cb(err, data);
+  });
 }
 
 function isDemo(cfg) {
@@ -418,7 +626,7 @@ function refresh() {
     if (inflightVin === vehicle.vin) return;
     inflightVin = vehicle.vin;
 
-    var pending = 2;
+    var pending = 4;
     var results = {};
     function done(key) {
       return function (e, data) {
@@ -432,12 +640,15 @@ function refresh() {
           sendError(results.battery.err.message, fields);
           return;
         }
-        send(merge(buildPayload(vehicle, results.status.data, results.battery.data), fields));
+        send(merge(buildPayload(vehicle, results.status.data, results.battery.data,
+          results.powertrain.data, results.driving.data), fields));
       };
     }
     var vinPath = '/v1/vehicles/' + encodeURIComponent(vehicle.vin);
     authGet(cfg, vinPath + '/status', done('status'));
     authGet(cfg, vinPath + '/batteries', done('battery'));
+    extraGet(cfg, vinPath + '/powertrains', done('powertrain'));
+    extraGet(cfg, vinPath + '/driving', done('driving'));
   });
 }
 

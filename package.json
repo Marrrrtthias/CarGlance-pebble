@@ -49,7 +49,15 @@
       "DATA_TIME",
       "VEHICLES",
       "VEHICLE_INDEX",
-      "SELECT_VEHICLE"
+      "SELECT_VEHICLE",
+      "DOORS_NOTE",
+      "TARGET_SOC",
+      "RANGE",
+      "TEMP",
+      "CLIMATE",
+      "CLIMATE_ON",
+      "ODOMETER",
+      "WARNINGS"
     ],
     "resources": {
       "media": [
@@ -87,6 +95,12 @@
           "type": "bitmap",
           "name": "IMAGE_CAR",
           "file": "images/car.png",
+          "storageFormat": "pbi"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_CHIPS",
+          "file": "images/chips.png",
           "storageFormat": "pbi"
         }
       ]
