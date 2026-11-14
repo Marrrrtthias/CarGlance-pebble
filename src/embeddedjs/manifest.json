@@ -13,6 +13,7 @@
 		"*": [
 			"./main",
 			"./car",
+			"./touch",
 			"./windows/*"
 		],
 		"pebble-ui/sdk": "../../pebble-ui/modules/sdk",

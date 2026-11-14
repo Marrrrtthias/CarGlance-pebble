@@ -96,6 +96,7 @@ that was just issued is shown right away, since a new login would not change it.
     ├── embeddedjs/
     │   ├── main.js          # application: the window stack
     │   ├── car.js           # car state, messages to and from the phone
+    │   ├── touch.js         # tap targets and hit testing
     │   ├── windows/
     │   │   ├── dashboard.js # home window
     │   │   └── picker.js    # car picker
@@ -110,11 +111,13 @@ that was just issued is shown right away, since a new login would not change it.
 Run the phone-side token lifecycle regression tests with Node.js:
 
 ```bash
-node --test tests/token-refresh.test.cjs
+node --test 'tests/**/*.test.cjs'
 ```
 
-These tests simulate expiry across app restarts, concurrent renewals, rejected
-tokens, and failures without real credentials or API calls.
+The token tests simulate expiry across app restarts, concurrent renewals,
+rejected tokens, and failures without real credentials or API calls. The
+vehicle list tests check that the car list always fits the watch's message
+buffer.
 
 You need the [Pebble SDK](https://developer.repebble.com) (`pebble` tool with SDK 4.33 or newer).
 

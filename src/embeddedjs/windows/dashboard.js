@@ -1,5 +1,5 @@
 // The home window: a blue header with the car's name, then doors, charging and
-// battery, and a footer with the data's age. It is rebuilt from `car` on every
+// battery, and a footer with the data's age. It follows `car` on every
 // onCarChanged, so it also shows the loading, no-credentials and error states.
 //
 // Select (or a tap on the refresh icon) refreshes; Down (or a tap on the car
@@ -8,6 +8,7 @@ import { FONT_KEY, textLayerStyle } from "pebble-ui/sdk";
 import View from "pebble-ui/View";
 import WindowStack from "pebble-ui/WindowStack";
 import { car, requestRefresh } from "car";
+import { TapBehavior } from "touch";
 
 // The footer turns yellow once the car's data is older than this.
 const STALE_AFTER_S = 60 * 60;
@@ -110,25 +111,10 @@ function hasCarButton() {
 }
 
 function openPicker() {
-	WindowStack.current.push("picker");
-}
-
-function inside(content, x, y) {
-	return x >= content.x && x < content.x + content.width && y >= content.y && y < content.y + content.height;
-}
-
-// A tap counts when it starts and ends inside the target.
-class TapBehavior extends Behavior {
-	onCreate(content, action) {
-		this.action = action;
-	}
-	onTouchBegan(content, id, x, y) {
-		this.began = inside(content, x, y);
-	}
-	onTouchEnded(content, id, x, y) {
-		if (this.began && inside(content, x, y))
-			this.action();
-	}
+	// The dashboard keeps the buttons while the picker slides in: open it once.
+	const stack = WindowStack.current;
+	if (!stack.depth)
+		stack.push("picker");
 }
 
 // Tap targets in the header, 44 x 40 like the rows' icons plus a margin.
@@ -136,121 +122,159 @@ function tapTarget(action, where, icon) {
 	return new Container(action, { ...where, top: 0, width: 44, height: 40, active: true, Behavior: TapBehavior, contents: [icon] });
 }
 
-function header(view) {
-	const withRefresh = hasRefreshButton(), withCar = hasCarButton();
-	// The title stays centred, so keep clear of buttons on both sides.
-	const maxWidth = screen.width - (withRefresh || withCar ? 72 : 12);
-	return [
-		new Content(null, { left: 0, right: 0, top: 0, height: 36, skin: headerSkin }),
-		new Label(null, {
-			left: 0, right: 0, top: 2, style: titleStyle,
-			string: fitText(car.state.name || (car.state.status === "ok" ? "My car" : "CarGlance"), titleStyle, maxWidth),
-		}),
-		withRefresh ? tapTarget(requestRefresh, { left: 0 },
-			new Content(null, { left: 0, top: 0, skin: view.skins.refresh, state: car.refreshing ? 1 : 0 })) : null,
-		withCar ? tapTarget(openPicker, { right: 0 },
-			new Content(null, { right: 0, top: 0, skin: view.skins.car })) : null,
-	];
+function show(content, visible) {
+	content.visible = visible;
+	content.active = visible;
 }
 
 // ---------------------------------------------------------------------------
-// Bodies
+// Bodies: each status has its own contents, built when the status changes and
+// then updated in place.
 
 const ICON_X = 12;
 const TEXT_X = 58;
 const TEXT_WIDTH = screen.width - TEXT_X - 6;
 
 // A row: the icon at the left, a small gray label and a bold value next to it.
-function row(top, icon, label, value, color) {
-	return [
+function addRow(body, top, icon) {
+	const row = {
 		icon,
-		new Label(null, { left: TEXT_X, width: TEXT_WIDTH, top: top + 1, style: labelStyle, string: fitText(label, labelStyle, TEXT_WIDTH) }),
-		new Label(null, { left: TEXT_X, width: TEXT_WIDTH, top: top + 13, style: valueStyles[color], string: fitText(value, valueStyles[color], TEXT_WIDTH) }),
-	];
+		label: new Label(null, { left: TEXT_X, width: TEXT_WIDTH, top: top + 1, style: labelStyle, string: "" }),
+		value: new Label(null, { left: TEXT_X, width: TEXT_WIDTH, top: top + 13, style: valueStyles.gray, string: "" }),
+	};
+	body.add(row.icon);
+	body.add(row.label);
+	body.add(row.value);
+	return row;
 }
 
-function glyph(skin, top, state = 0) {
-	return new Content(null, { left: ICON_X, top: top + 4, skin, state });
+function setRow(row, label, value, color) {
+	row.label.string = fitText(label, labelStyle, TEXT_WIDTH);
+	row.value.style = valueStyles[color];
+	row.value.string = fitText(value, valueStyles[color], TEXT_WIDTH);
 }
 
-// A battery outline with a nub, filled to pct in the given colour (green,
-// yellow or red).
-function battery(top, pct, color) {
-	const fill = pct > 0 ? Math.max(1, (22 * pct / 100) | 0) : 0;
-	return new Container(null, {
+function glyph(skin, top) {
+	return new Content(null, { left: ICON_X, top: top + 4, skin });
+}
+
+// A battery outline with a nub; `fill` is its level bar.
+function battery(top) {
+	const fill = new Content(null, { left: 4, top: 4, width: 1, height: 10, skin: batterySkins.green, visible: false });
+	const icon = new Container(null, {
 		left: ICON_X, top: top + 13, width: 34, height: 18,
 		contents: [
 			new Content(null, { left: 0, top: 0, width: 30, height: 18, skin: whiteSkin }),
 			new Content(null, { left: 2, top: 2, width: 26, height: 14, skin: blackSkin }),
 			new Content(null, { left: 30, top: 5, width: 4, height: 8, skin: whiteSkin }),
-			fill ? new Content(null, { left: 4, top: 4, width: fill, height: 10, skin: batterySkins[color] }) : null,
+			fill,
 		],
 	});
+	icon.fill = fill;
+	return icon;
 }
 
-function dashboard(view) {
-	const s = car.state, skins = view.skins;
-	const contents = [];
-
-	let top = 44;
-	if (s.locked === 1)
-		contents.push(...row(top, glyph(skins.lock, top, LOCK.locked), "Doors", "Locked", "green"));
-	else if (s.locked === 0)
-		contents.push(...row(top, glyph(skins.lock, top, LOCK.unlocked), "Doors", "Unlocked", "red"));
-	else if (s.locked === 2)
-		contents.push(...row(top, glyph(skins.lock, top, LOCK.unlocked), "Doors", "Door open", "red"));
-	else
-		contents.push(...row(top, glyph(skins.lock, top, LOCK.unknown), "Doors", "Unknown", "gray"));
-
-	top = 96;
-	if (s.charging) {
-		const remain = formatRemain(s.remainMin);
-		contents.push(...row(top, glyph(skins.bolt, top), remain ? `Charging · ${remain} left` : "Charging",
-			s.chargeStatus === "fastCharging" ? "Fast charging" : "Charging", "yellow"));
-	}
-	else if (s.plugged === 1)
-		contents.push(...row(top, glyph(skins.plug, top, PLUG.plugged), "Charging", "Plugged in", "white"));
-	else if (s.plugged === 0)
-		contents.push(...row(top, glyph(skins.plug, top, PLUG.unplugged), "Charging", "Not plugged in", "gray"));
-	else
-		contents.push(...row(top, glyph(skins.plug, top, PLUG.unplugged), "Charging", "Unknown", "gray"));
-
-	top = 148;
-	if (s.soc >= 0) {
-		const color = s.soc >= 50 ? "green" : (s.soc >= 20 ? "yellow" : "red");
-		contents.push(...row(top, battery(top, s.soc, color), "Battery", `${s.soc}%`, color));
-	}
-	else
-		contents.push(...row(top, battery(top, 0), "Battery", "Unknown", "gray"));
-
-	const [text, color] = footer();
-	contents.push(
-		new Content(null, { left: 8, right: 8, top: 200, height: 1, skin: ruleSkin }),
-		new Label(null, { left: 0, right: 0, top: 205, style: footerStyle, state: color, string: text, name: "footer" }),
-	);
-	return contents;
-}
-
-function message(text, top) {
-	return new Text(null, { left: 10, right: 10, top, style: bodyStyle, string: text });
-}
-
-function body(view) {
-	switch (car.state.status) {
-	case "ok":
-		return dashboard(view);
-	case "nocreds":
-		return [message("Open the app settings in the Pebble phone app and enter your Pleos API credentials.", 70)];
-	case "error":
-		return [
-			new Label(null, { left: 0, right: 0, top: 60, style: errorStyle, string: "Error" }),
-			message(car.state.error || "Unknown error", 94),
-			new Label(null, { left: 0, right: 0, top: 205, style: footerStyle, state: F.gray, string: "Select: retry" }),
-		];
-	default:
-		return [message("Loading vehicle data…", 100)];
+// Fills the battery to pct in the given colour (green, yellow or red).
+function setBattery(icon, pct, color) {
+	const fill = icon.fill;
+	fill.visible = pct > 0;
+	if (pct > 0) {
+		fill.coordinates = { left: 4, top: 4, width: Math.max(1, (22 * pct / 100) | 0), height: 10 };
+		fill.skin = batterySkins[color];
 	}
 }
+
+function message(body, text, top) {
+	const content = new Text(null, { left: 10, right: 10, top, style: bodyStyle, string: text });
+	body.add(content);
+	return content;
+}
+
+const BODIES = {
+	ok: {
+		build(body, skins) {
+			const parts = {
+				doors: addRow(body, 44, glyph(skins.lock, 44)),
+				charging: addRow(body, 96, glyph(skins.plug, 96)),
+				battery: addRow(body, 148, battery(148)),
+				footer: new Label(null, { left: 0, right: 0, top: 205, style: footerStyle, string: "" }),
+			};
+			body.add(new Content(null, { left: 8, right: 8, top: 200, height: 1, skin: ruleSkin }));
+			body.add(parts.footer);
+			return parts;
+		},
+		update(parts, skins) {
+			const s = car.state;
+
+			const doors = parts.doors;
+			if (s.locked === 1) {
+				doors.icon.state = LOCK.locked;
+				setRow(doors, "Doors", "Locked", "green");
+			}
+			else if (s.locked === 0 || s.locked === 2) {
+				doors.icon.state = LOCK.unlocked;
+				setRow(doors, "Doors", s.locked ? "Door open" : "Unlocked", "red");
+			}
+			else {
+				doors.icon.state = LOCK.unknown;
+				setRow(doors, "Doors", "Unknown", "gray");
+			}
+
+			const charging = parts.charging;
+			if (s.charging) {
+				const remain = formatRemain(s.remainMin);
+				charging.icon.skin = skins.bolt;
+				charging.icon.state = 0;
+				setRow(charging, remain ? `Charging · ${remain} left` : "Charging",
+					s.chargeStatus === "fastCharging" ? "Fast charging" : "Charging", "yellow");
+			}
+			else {
+				charging.icon.skin = skins.plug;
+				charging.icon.state = s.plugged === 1 ? PLUG.plugged : PLUG.unplugged;
+				if (s.plugged === 1)
+					setRow(charging, "Charging", "Plugged in", "white");
+				else
+					setRow(charging, "Charging", s.plugged === 0 ? "Not plugged in" : "Unknown", "gray");
+			}
+
+			const batteryRow = parts.battery;
+			if (s.soc >= 0) {
+				const color = s.soc >= 50 ? "green" : (s.soc >= 20 ? "yellow" : "red");
+				setBattery(batteryRow.icon, s.soc, color);
+				setRow(batteryRow, "Battery", `${s.soc}%`, color);
+			}
+			else {
+				setBattery(batteryRow.icon, 0);
+				setRow(batteryRow, "Battery", "Unknown", "gray");
+			}
+
+			const [text, color] = footer();
+			parts.footer.string = text;
+			parts.footer.state = color;
+		},
+	},
+	nocreds: {
+		build(body) {
+			message(body, "Open the app settings in the Pebble phone app and enter your Pleos API credentials.", 70);
+		},
+	},
+	error: {
+		build(body) {
+			body.add(new Label(null, { left: 0, right: 0, top: 60, style: errorStyle, string: "Error" }));
+			const parts = { error: message(body, "", 94) };
+			body.add(new Label(null, { left: 0, right: 0, top: 205, style: footerStyle, state: F.gray, string: "Select: retry" }));
+			return parts;
+		},
+		update(parts) {
+			parts.error.string = car.state.error || "Unknown error";
+		},
+	},
+	loading: {
+		build(body) {
+			message(body, "Loading vehicle data…", 100);
+		},
+	},
+};
 
 // ---------------------------------------------------------------------------
 // Window
@@ -258,25 +282,44 @@ function body(view) {
 class DashboardBehavior extends View.Behavior {
 	onCreate(container, view) {
 		super.onCreate(container, view);
-		this.build(container);
+		const skins = view.skins;
+		this.body = new Container(null, { left: 0, right: 0, top: 0, bottom: 0 });
+		this.title = new Label(null, { left: 0, right: 0, top: 2, style: titleStyle, string: "" });
+		this.refreshIcon = new Content(null, { left: 0, top: 0, skin: skins.refresh });
+		this.refreshTap = tapTarget(requestRefresh, { left: 0 }, this.refreshIcon);
+		this.carTap = tapTarget(openPicker, { right: 0 }, new Content(null, { right: 0, top: 0, skin: skins.car }));
+		container.add(new Content(null, { left: 0, right: 0, top: 0, height: 36, skin: headerSkin }));
+		container.add(this.body);
+		container.add(this.title);
+		container.add(this.refreshTap);
+		container.add(this.carTap);
+		this.update();
 	}
-	build(container) {
-		container.empty();
-		for (const content of [...header(this.view), ...body(this.view)])
-			if (content)
-				container.add(content);
+	// Brings the window up to date with `car`: the body's contents are made
+	// again only when the status changes.
+	update() {
+		const s = car.state, withRefresh = hasRefreshButton(), withCar = hasCarButton();
+		show(this.refreshTap, withRefresh);
+		this.refreshIcon.state = car.refreshing ? 1 : 0;
+		show(this.carTap, withCar);
+		// The title stays centred, so keep clear of buttons on both sides.
+		const maxWidth = screen.width - (withRefresh || withCar ? 72 : 12);
+		this.title.string = fitText(s.name || (s.status === "ok" ? "My car" : "CarGlance"), titleStyle, maxWidth);
+
+		const body = BODIES[s.status] ?? BODIES.loading;
+		if (body !== this.shown) {
+			this.shown = body;
+			this.body.empty();
+			this.parts = body.build(this.body, this.view.skins);
+		}
+		body.update?.(this.parts, this.view.skins);
 	}
 	onCarChanged(container) {
-		this.build(container);
+		this.update();
 	}
 	// Keeps the data's age current between refreshes.
 	onMinuteChanged(container) {
-		const label = container.content("footer");
-		if (label && car.state.status === "ok") {
-			const [text, color] = footer();
-			label.string = text;
-			label.state = color;
-		}
+		this.update();
 	}
 	onPressSelect(container) {
 		requestRefresh();

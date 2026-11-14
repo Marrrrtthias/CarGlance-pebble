@@ -8,6 +8,10 @@ import Message from "pebble/message";
 import WindowStack from "pebble-ui/WindowStack";
 
 const AUTO_REFRESH_MS = 10 * 60 * 1000;
+// A request that can't be written (the outbox is busy) is retried this often,
+// and given up as failed after the second interval.
+const RETRY_MS = 500;
+const GIVE_UP_MS = 10 * 1000;
 // How long a failed refresh's error replaces the data's age in the footer.
 const ERROR_SHOW_MS = 5 * 1000;
 
@@ -37,7 +41,17 @@ function closeWindows() {
 let writable = false;
 let refreshPending = true; // request data as soon as the channel is ready
 let selectPending = -1;    // car picked while the channel was not ready
+let retryTimer;            // set while a failed write waits to be retried
+let failingSince;          // time of the first failed write of this request
 
+function stopRetrying() {
+	if (retryTimer !== undefined) clearTimeout(retryTimer);
+	retryTimer = failingSince = undefined;
+}
+
+// Sends the pending request. While the channel is suspended it waits for
+// onWritable; a write that fails (the outbox is busy, and the firmware doesn't
+// report when it is free) is retried until GIVE_UP_MS, then reported.
 function flushRequests() {
 	if (!writable || (!refreshPending && selectPending < 0)) return;
 	// Selecting a car also refreshes it on the phone.
@@ -48,8 +62,24 @@ function flushRequests() {
 		message.write(msg);
 		refreshPending = false;
 		selectPending = -1;
+		stopRetrying();
 	} catch (e) {
 		console.log("request write failed: " + e);
+		failingSince ??= Date.now();
+		if (Date.now() - failingSince >= GIVE_UP_MS) {
+			refreshPending = false;
+			selectPending = -1;
+			stopRetrying();
+			car.refreshing = false;
+			refreshFailed("Phone busy");
+			changed();
+		}
+		else if (retryTimer === undefined) {
+			retryTimer = setTimeout(() => {
+				retryTimer = undefined;
+				flushRequests();
+			}, RETRY_MS);
+		}
 	}
 }
 
@@ -61,6 +91,9 @@ export function requestRefresh() {
 }
 
 export function pickVehicle(i) {
+	// The list can change, or be emptied by new settings, while the picker
+	// is still on screen.
+	if (!car.vehicles[i]) return;
 	if (i !== car.vehicleIndex) {
 		car.vehicleIndex = i;
 		// Show the new car's name right away; its data follows.
@@ -102,6 +135,16 @@ function showLastError(error) {
 	}, ERROR_SHOW_MS);
 }
 
+// A refresh failed: keep showing the last good data with the error in the
+// footer, or show the error instead of the dashboard if there is none.
+function refreshFailed(error) {
+	if (car.state.status === "ok")
+		showLastError(error);
+	else
+		// An error keeps the car's name in the header.
+		car.state = { status: "error", name: car.state.name, error };
+}
+
 const message = new Message({
 	// Buffer sizes in bytes. The default (the maximum, 8 kB each way) would
 	// take memory the app heap doesn't have to spare. The largest message is
@@ -124,7 +167,14 @@ const message = new Message({
 			car.state = { status };
 			car.vehicles = [];
 			closeWindows();
-		} else if (status === "ok") {
+		} else if (status) {
+			// The phone answered, so a refresh still waiting to be written is
+			// satisfied (a picked car still has to be sent).
+			refreshPending = false;
+			if (selectPending < 0)
+				stopRetrying();
+		}
+		if (status === "ok") {
 			car.refreshing = false;
 			car.state = {
 				status,
@@ -137,15 +187,12 @@ const message = new Message({
 				remainMin: num(msg.get("REMAIN_MIN"), 0),
 				dataTime: num(msg.get("DATA_TIME"), -1),
 			};
+		} else if (status === "error") {
+			car.refreshing = false;
+			refreshFailed(msg.get("ERROR"));
 		} else if (status) {
 			car.refreshing = false;
-			// Keep showing the last good data if a later refresh fails.
-			if (car.state.status === "ok" && status === "error") {
-				showLastError(msg.get("ERROR"));
-			} else {
-				// An error keeps the car's name in the header.
-				car.state = { status, name: status === "error" ? car.state.name : undefined, error: msg.get("ERROR") };
-			}
+			car.state = { status, error: msg.get("ERROR") };
 			if (status === "nocreds") {
 				car.vehicles = [];
 				closeWindows();

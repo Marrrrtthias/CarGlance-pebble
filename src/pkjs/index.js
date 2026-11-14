@@ -13,8 +13,16 @@ var STORE_SELECTED = 'bp-selected';
 // Replaced by STORE_VEHICLES; removed on startup.
 var STORE_LEGACY_VEHICLE = 'bp-vehicle';
 
-// Upper bound for the vehicle list sent to the watch.
+// Upper bounds for the vehicle list sent to the watch. The watch's inbox is
+// 1 kB (input in src/embeddedjs/car.js), and a message also carries the status
+// fields or an error, so the list gets at most VEHICLES_MAX_BYTES of it
+// (UTF-8): 20 ASCII names fit, fewer with multibyte names. Cars past the limit
+// are left out of the picker.
 var MAX_VEHICLES = 20;
+var VEHICLE_NAME_MAX = 24;
+var VEHICLES_MAX_BYTES = 600;
+// Longest car name sent for the watch's header (which shortens it to fit).
+var NAME_MAX = 40;
 
 // Responses that mean "get a new token and try again", by HTTP status and by
 // the API's own `error.code`. 40002-40004 were handled from the start. The API
@@ -303,14 +311,33 @@ function dataTime() {
   return oldest === -1 ? -1 : Math.floor(oldest / 1000);
 }
 
+// Length of a string in UTF-8 bytes, as AppMessage sends it.
+function utf8Length(str) {
+  var bytes = 0;
+  for (var i = 0; i < str.length; i++) {
+    var c = str.charCodeAt(i);
+    if (c < 0x80) bytes += 1;
+    else if (c < 0x800) bytes += 2;
+    else if (c >= 0xD800 && c < 0xDC00 && i + 1 < str.length) { bytes += 4; i++; }
+    else bytes += 3;
+  }
+  return bytes;
+}
+
 // Vehicle list for the car picker: one "name<TAB>last 4 VIN digits" entry
-// per line.
+// per line, within MAX_VEHICLES entries and VEHICLES_MAX_BYTES.
 function vehicleFields(vehicles, index) {
-  var list = vehicles.slice(0, MAX_VEHICLES).map(function (v) {
-    var name = String(v.name).replace(/[\t\n]/g, ' ').substring(0, 40);
-    return name + '\t' + v.vin.slice(-4);
-  });
-  return { VEHICLES: list.join('\n'), VEHICLE_INDEX: index };
+  var list = '';
+  var bytes = 0;
+  for (var i = 0; i < vehicles.length && i < MAX_VEHICLES; i++) {
+    var name = String(vehicles[i].name).replace(/[\t\n]/g, ' ').substring(0, VEHICLE_NAME_MAX);
+    var line = (i ? '\n' : '') + name + '\t' + vehicles[i].vin.slice(-4);
+    var size = utf8Length(line);
+    if (bytes + size > VEHICLES_MAX_BYTES) break;
+    list += line;
+    bytes += size;
+  }
+  return { VEHICLES: list, VEHICLE_INDEX: index };
 }
 
 function buildPayload(vehicle, status, battery) {
@@ -318,7 +345,7 @@ function buildPayload(vehicle, status, battery) {
   var soc = typeof charge.stateOfCharge === 'number' ? Math.round(charge.stateOfCharge) : -1;
   return {
     STATUS: 'ok',
-    NAME: vehicle.name,
+    NAME: String(vehicle.name).substring(0, NAME_MAX),
     LOCKED: status ? lockState(status) : -1,
     PLUGGED: charge.plugin === 'connected' ? 1 : (charge.plugin === 'disconnected' ? 0 : -1),
     CHARGING: charge.charging ? 1 : 0,
