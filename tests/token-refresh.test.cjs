@@ -202,6 +202,7 @@ test('responses from before a settings change neither reach the watch nor end th
   app.events.ready();
   const oldStatus = take(app, 'GET');
   const oldBattery = take(app, 'GET');
+  const oldExtras = [take(app, 'GET'), take(app, 'GET')];
 
   // Saving unchanged settings starts a new refresh for the same car.
   app.events.webviewclosed({ response: JSON.stringify(settings) });
@@ -209,16 +210,91 @@ test('responses from before a settings change neither reach the watch nor end th
   take(app, 'GET').callback(null, { vehicles: [{ vin, nickname: 'Car' }] });
   const newStatus = take(app, 'GET');
   const newBattery = take(app, 'GET');
+  const newExtras = [take(app, 'GET'), take(app, 'GET')];
   assert.equal(app.context.inflightVin, vin);
 
   oldStatus.callback(new app.context.ApiError('Forbidden', null, 403));
   oldBattery.callback(null, { charge: {} });
+  oldExtras.forEach(get => get.callback(null, {}));
   assert.equal(app.requests.length, 0, 'stale responses must not trigger a retry');
   assert.equal(app.context.inflightVin, vin, 'stale responses must not end the new refresh');
   assert.deepEqual(app.sent.map(payload => payload.STATUS), ['loading']);
 
   newStatus.callback(null, { doors: [] });
   newBattery.callback(null, { charge: { stateOfCharge: 50 } });
+  assert.deepEqual(app.sent.map(payload => payload.STATUS), ['loading']);
+  newExtras.forEach(get => get.callback(null, {}));
   assert.deepEqual(app.sent.map(payload => payload.STATUS), ['loading', 'ok']);
   assert.equal(app.sent[1].SOC, 50);
+});
+
+function refreshCar() {
+  const vin = 'KMH00000000000001';
+  const storage = stored(valid);
+  storage.set('bp-config', JSON.stringify({ brand: 'kia', clientId: 'test-id', clientSecret: 'test-secret' }));
+  storage.set('bp-vehicles', JSON.stringify([{ vin, name: 'Car' }]));
+  const app = runtime(storage);
+  app.events.ready();
+  return app;
+}
+
+test('a refresh fetches status, batteries, powertrains and driving and sends the extras', () => {
+  const app = refreshCar();
+  const gets = [take(app, 'GET'), take(app, 'GET'), take(app, 'GET'), take(app, 'GET')];
+  assert.deepEqual(gets.map(get => get.endpoint.split('/').pop()), ['status', 'batteries', 'powertrains', 'driving']);
+  gets[0].callback(null, {
+    doors: [{ left: 'locked', right: 'locked' }], trunk: 'open',
+    tire: [{ left: 25, right: 25, unit: 'bar' }, { left: 19, right: 255, unit: 'bar' }],
+    warnings: ['tirePressureRearLeft', 'washFluid', 'somethingNew'],
+    outsideTemperature: { value: 7.6, unit: 'C' },
+    climateControl: { mode: 'auto', status: 'on', temperature: { value: 21.5, unit: 'C' } }
+  });
+  gets[1].callback(null, { charge: { status: 'fastCharging', stateOfCharge: 40, targetStateOfCharge: { standard: 80, quick: 90 } } });
+  gets[2].callback(null, { distanceToEmpties: [{ type: 'invalid', value: 'invalid', unit: 'invalid' }, { type: 'EV', value: '1312', unit: 'km' }] });
+  gets[3].callback(null, { odometer: { value: 48213.4, unit: 'km' } });
+  const payload = app.sent[0];
+  assert.equal(payload.STATUS, 'ok');
+  assert.equal(payload.DOORS_NOTE, 'trunk open');
+  assert.equal(payload.TARGET_SOC, 90);
+  assert.equal(payload.RANGE, '1,312 km');
+  assert.equal(payload.ODOMETER, '48,213 km');
+  assert.equal(payload.TEMP, '8\u00B0C');
+  assert.equal(payload.CLIMATE, '21.5\u00B0 auto');
+  assert.equal(payload.CLIMATE_ON, 1);
+  assert.equal(payload.WARNINGS, 'Low tire: rear left\t1.9 bar\nWasher fluid low\tTop up soon\nCar warning\tsomethingNew');
+});
+
+test('missing extras leave their fields empty', () => {
+  const app = refreshCar();
+  const gets = [take(app, 'GET'), take(app, 'GET'), take(app, 'GET'), take(app, 'GET')];
+  gets[0].callback(null, { doors: [{ left: 'closed', right: 'locked' }] });
+  gets[1].callback(null, { charge: { stateOfCharge: 50 } });
+  gets[2].callback(new app.context.ApiError('Server error', null, 500));
+  gets[3].callback(null, {});
+  const payload = app.sent[0];
+  assert.equal(payload.STATUS, 'ok');
+  assert.equal(payload.DOORS_NOTE, 'all closed');
+  assert.equal(payload.TARGET_SOC, -1);
+  assert.equal(payload.RANGE, '');
+  assert.equal(payload.ODOMETER, '');
+  assert.equal(payload.CLIMATE_ON, -1);
+  assert.equal(payload.WARNINGS, '');
+});
+
+test('an extra the API refuses is not requested again until the settings change', () => {
+  const app = refreshCar();
+  const gets = [take(app, 'GET'), take(app, 'GET'), take(app, 'GET'), take(app, 'GET')];
+  gets[0].callback(null, {});
+  gets[1].callback(null, { charge: {} });
+  // The cached token is retried once with a new one, then the refusal stands.
+  gets[2].callback(new app.context.ApiError('Forbidden', null, 403));
+  take(app, 'POST').callback(null, { accessToken: fresh });
+  take(app, 'GET').callback(new app.context.ApiError('Forbidden', null, 403));
+  gets[3].callback(null, {});
+  assert.deepEqual(app.sent.map(payload => payload.STATUS), ['ok']);
+
+  app.events.appmessage({ payload: { REFRESH: 1 } });
+  const again = [take(app, 'GET'), take(app, 'GET'), take(app, 'GET')];
+  assert.deepEqual(again.map(get => get.endpoint.split('/').pop()), ['status', 'batteries', 'driving']);
+  assert.equal(app.requests.length, 0);
 });

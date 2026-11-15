@@ -1,4 +1,4 @@
-// The car list sent to the watch must fit its 1 kB AppMessage inbox
+// The car list sent to the watch must fit its 1.5 kB AppMessage inbox
 // (input in src/embeddedjs/car.js). Run: node --test tests/vehicle-list.test.cjs
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
@@ -61,15 +61,26 @@ test('multibyte names stay within the byte budget and keep whole entries', () =>
 
 test('the largest message fits the watch inbox', () => {
   const app = load();
-  // An "ok" payload with the longest name and list, sized as a Pebble
-  // dictionary: 1 byte count, 7 bytes per tuple header, strings with a NUL.
+  // An "ok" payload with the longest name, list and warnings and every extra,
+  // sized as a Pebble dictionary: 1 byte count, 7 bytes per tuple header,
+  // strings with a NUL.
+  const status = {
+    hood: 'open', trunk: 'open', sunroof: 'open',
+    outsideTemperature: { value: -40.5, unit: 'C' },
+    climateControl: { status: 'on', mode: 'auto', temperature: { value: 27.5, unit: 'C' } },
+    warnings: Array.from({ length: 30 }, (_, i) => '€'.repeat(40) + i)
+  };
   const payload = Object.assign(
-    app.buildPayload({ name: '€'.repeat(100) }, null, { charge: { status: 'fastCharging' } }),
+    app.buildPayload({ name: '€'.repeat(100) }, status,
+      { charge: { status: 'fastCharging', targetStateOfCharge: { quick: 100 } } },
+      { distanceToEmpties: [{ type: 'EV', value: '99999', unit: 'miles' }] },
+      { odometer: { value: 9999999, unit: 'km' } }),
     app.vehicleFields(cars(20, () => '€'.repeat(30)), 0));
+  assert.ok(Buffer.byteLength(payload.WARNINGS, 'utf8') <= 400);
   let size = 1;
   for (const key of Object.keys(payload)) {
     const value = payload[key];
     size += 7 + (typeof value === 'string' ? Buffer.byteLength(value, 'utf8') + 1 : 4);
   }
-  assert.ok(size <= 1024, 'message is ' + size + ' bytes');
+  assert.ok(size <= 1536, 'message is ' + size + ' bytes');
 });

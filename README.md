@@ -1,6 +1,6 @@
 # CarGlance for Hyundai, Kia & Genesis
 
-A Pebble watchapp that shows the status of your Hyundai, Kia or Genesis car at a glance: whether the doors are locked, whether it is charging, and the battery level.
+A Pebble watchapp that shows the status of your Hyundai, Kia or Genesis car at a glance: whether the doors are locked, whether it is charging, the battery level and range, a few more facts, and the car's warnings.
 
 Data comes from the [Pleos Vehicle Data API](https://document.pleos.ai/en/api-reference/vehicle-data-api/getting-started/for-private-users/overview), the official vehicle data API of Hyundai Motor Group.
 
@@ -13,16 +13,19 @@ All data is processed locally on your Pebble and phone. Your API credentials are
 
 <p>
   <img src="docs/screenshots/charging.png" alt="Dashboard while charging" width="200">
-  <img src="docs/screenshots/not-plugged.png" alt="Dashboard while not plugged in" width="200">
+  <img src="docs/screenshots/not-plugged.png" alt="Dashboard while not plugged in, with a warning" width="200">
+  <img src="docs/screenshots/warnings.png" alt="Warning list" width="200">
   <img src="docs/screenshots/login-error.png" alt="Login error" width="200">
   <img src="docs/screenshots/car-picker.png" alt="Car picker" width="200">
 </p>
 
 ## Features
 
-- **Doors:** Locked, Unlocked, Door open or Unknown, with a padlock icon.
-- **Charging:** shows Charging or Fast charging with the time remaining, Plugged in, or Not plugged.
-- **Battery:** the state of charge as a percentage, with a battery icon colored green (50% and up), yellow (20–49%) or red (below 20%).
+- **Doors:** Locked, Unlocked, Door open or Unknown, with a padlock icon. The label also says whether the hood, trunk or sunroof is open ("Doors · trunk open") or everything is closed.
+- **Charging:** shows Charging or Fast charging with the time remaining and the charge limit ("1h 35m to 80%"), Plugged in (with the charge limit), or Not plugged.
+- **Battery:** the state of charge as a percentage, with a battery icon colored green (50% and up), yellow (20–49%) or red (below 20%), and the range next to it.
+- **Facts:** outside temperature, climate control (set temperature, blue while on) and odometer in a strip below. Facts the car doesn't report are left out.
+- **Warnings:** when the car reports warnings (low tire pressure, low washer fluid, a weak key battery, a failed bulb, …), a yellow bar replaces the footer. It names a single warning, or counts several. Press **Up** or tap the bar to list them with details such as the tire pressure; Back returns.
 - **Refreshing:**
   - The data refreshes automatically every 10 minutes while the app is open.
   - To refresh manually, press **Select** or tap the refresh icon in the top-left corner (on touchscreen watches).
@@ -33,7 +36,7 @@ All data is processed locally on your Pebble and phone. Your API credentials are
 - **Settings page** in the Pebble phone app:
   - Step-by-step instructions for getting API credentials.
   - Fields for manufacturer, Client ID and Client Secret.
-- **Demo mode:** enter `demo` as the Client ID to see sample data for two cars without an account.
+- **Demo mode:** enter `demo` as the Client ID to see sample data for three cars without an account: one without warnings, one with a single warning and one with several.
 
 Supported watch: Pebble Time 2 (`emery`).
 
@@ -59,15 +62,15 @@ Only vehicles registered when the key was issued are available. For a car you ad
 
 **Watch (Alloy).**
 - The watch side is written in JavaScript and runs on the watch's Moddable XS engine.
-- Its screens are built with Piu and [pebble-ui](https://github.com/michaelthatsit/pebble-ui), a library of Pebble's native widgets for Alloy, included as a git submodule. pebble-ui provides the window stack (with the system's slide transition and Back handling) and the car picker's menu. The dashboard is a pebble-ui window of its own, drawn with system fonts and small bitmap icons.
+- Its screens are built with Piu and [pebble-ui](https://github.com/michaelthatsit/pebble-ui), a library of Pebble's native widgets for Alloy, included as a git submodule. pebble-ui provides the window stack (with the system's slide transition and Back handling) and the menus of the car picker and the warning list. The dashboard is a pebble-ui window of its own, drawn with system fonts and small bitmap icons.
 - `car.js` holds the car's state. It never talks to the network: it keeps whatever the phone sends and asks for new data with a `REFRESH` message.
 - `src/c/mdbl.c` is the Alloy startup file. It gives the JavaScript machine the larger memory sizes that Piu needs.
 
 **Phone (PebbleKit JS).** The phone side makes all API calls with `XMLHttpRequest`:
 1. It requests an access token from `POST /v1/auth/personal-token`, using the Client ID, the Client Secret and a `Brand` header.
 2. It lists the account's vehicles through `GET /v1/vehicles/consent` and caches the list until the settings change. The selected car is shown, or the first one if none was picked yet.
-3. It requests `GET /v1/vehicles/{vin}/status` for the doors and `GET /v1/vehicles/{vin}/batteries` for charging, both at the same time.
-4. It reduces the results to a few values (`LOCKED`, `PLUGGED`, `CHARGING`, `SOC`, `REMAIN_MIN`, `DATA_TIME`, …) and sends them to the watch.
+3. It requests four endpoints at the same time: `GET /v1/vehicles/{vin}/status` (doors, hood, trunk, warnings, climate, outside temperature, tire pressures), `/batteries` (charging), `/powertrains` (range) and `/driving` (odometer). Status and batteries are required; range and odometer are left out if their request fails, and an endpoint the API refuses (403 or 404) isn't asked again until the settings change.
+4. It reduces the results to a few values (`LOCKED`, `PLUGGED`, `CHARGING`, `SOC`, `RANGE`, `WARNINGS`, `DATA_TIME`, …), formatted as the watch shows them, and sends them to the watch.
 
 The API has no refresh token. Before each authorized request, the app checks the
 cached access token's JWT `exp` timestamp and renews it if it has expired or has
@@ -99,7 +102,8 @@ that was just issued is shown right away, since a new login would not change it.
     │   ├── touch.js         # tap targets and hit testing
     │   ├── windows/
     │   │   ├── dashboard.js # home window
-    │   │   └── picker.js    # car picker
+    │   │   ├── picker.js    # car picker
+    │   │   └── warnings.js  # warning list
     │   └── manifest.json    # Moddable manifest: modules and machine sizes
     └── pkjs/
         ├── index.js         # phone-side API client

@@ -1,9 +1,12 @@
 // The home window: a blue header with the car's name, then doors, charging and
-// battery, and a footer with the data's age. It follows `car` on every
-// onCarChanged, so it also shows the loading, no-credentials and error states.
+// battery (with range), a strip of facts (outside temperature, climate,
+// odometer), and a footer with the data's age, or the car's warnings when it
+// has any. It follows `car` on every onCarChanged, so it also shows the
+// loading, no-credentials and error states.
 //
 // Select (or a tap on the refresh icon) refreshes; Down (or a tap on the car
-// icon) opens the car picker when the account has more than one car.
+// icon) opens the car picker when the account has more than one car; Up (or a
+// tap on the warning bar) opens the warning list.
 import { FONT_KEY, textLayerStyle } from "pebble-ui/sdk";
 import View from "pebble-ui/View";
 import WindowStack from "pebble-ui/WindowStack";
@@ -20,6 +23,7 @@ const DARK_GRAY = "#555555";
 const GREEN = "#00AA55";
 const RED = "#FF5555";
 const YELLOW = "#FFAA00";
+const LIGHT_BLUE = "#55AAFF";
 
 // Colours by name, for values: a Piu style or skin holds at most four colours
 // as states, so values get one style per colour.
@@ -30,17 +34,26 @@ const F = { gray: 0, yellow: 1, red: 2 };
 
 // Glyph resources (package.json resources.media, from 1) and their states,
 // one 36 px glyph per state stacked in the bitmap (tools/make_icons.py).
-const RESOURCE = { lock: 2, plug: 3, bolt: 4, refresh: 5, car: 6 };
+const RESOURCE = { lock: 2, plug: 3, bolt: 4, refresh: 5, car: 6, chips: 7 };
 const LOCK = { locked: 0, unlocked: 1, unknown: 2 };
 const PLUG = { plugged: 0, unplugged: 1 };
 const GLYPH = 36;
+// The small icons of the facts strip (states of variant 0) and the warning
+// bar (variant 1), 14 px each.
+const CHIP = { temp: 0, climateOn: 1, climateOff: 2, odometer: 3 };
+const CHIP_WARNING = 1;
+const CHIP_SIZE = 14;
 
 const titleStyle = textLayerStyle(FONT_KEY.GOTHIC_24_BOLD, WHITE, "center");
 const labelStyle = textLayerStyle(FONT_KEY.GOTHIC_14, GRAY);
 const valueStyles = {};
 for (const name in COLORS)
 	valueStyles[name] = textLayerStyle(FONT_KEY.GOTHIC_24_BOLD, COLORS[name]);
-const footerStyle = textLayerStyle(FONT_KEY.GOTHIC_14, FOOTER_COLORS, "center");
+export const footerStyle = textLayerStyle(FONT_KEY.GOTHIC_14, FOOTER_COLORS, "center");
+const rangeStyle = textLayerStyle(FONT_KEY.GOTHIC_18, WHITE);
+// The facts strip's text: white, light blue (climate on) or gray as states.
+const chipStyle = textLayerStyle(FONT_KEY.GOTHIC_14, [WHITE, LIGHT_BLUE, GRAY]);
+const warningStyle = textLayerStyle(FONT_KEY.GOTHIC_14_BOLD, "#000000");
 const bodyStyle = textLayerStyle(FONT_KEY.GOTHIC_18, WHITE, "center");
 const errorStyle = textLayerStyle(FONT_KEY.GOTHIC_24_BOLD, RED, "center");
 
@@ -50,6 +63,7 @@ const ruleSkin = new Skin({ fill: DARK_GRAY });
 const whiteSkin = new Skin({ fill: WHITE });
 const blackSkin = new Skin({ fill: "#000000" });
 const batterySkins = { green: new Skin({ fill: GREEN }), yellow: new Skin({ fill: YELLOW }), red: new Skin({ fill: RED }) };
+const warningSkin = batterySkins.yellow;
 
 // ---------------------------------------------------------------------------
 // Text helpers
@@ -85,8 +99,9 @@ function formatAge(ageS) {
 	return d === 1 ? "1 day ago" : `${d} days ago`;
 }
 
-// The footer's text and colour for the current state.
-function footer() {
+// The footer's text and colour (F) when it shows the refresh state or the
+// data's age; also the warning list's footer.
+export function footer() {
 	const s = car.state;
 	if (car.refreshing)
 		return ["Updating…", F.gray];
@@ -97,6 +112,26 @@ function footer() {
 		return [`Car data: ${formatAge(age)}`, age > STALE_AFTER_S ? F.yellow : F.gray];
 	}
 	return ["Car data: age unknown", F.gray];
+}
+
+// The warning bar's text: the warning itself when there is one, else a count.
+function warningText(warnings, maxWidth) {
+	if (warnings.length > 1)
+		return `${warnings.length} warnings · press Up`;
+	const { title, detail } = warnings[0];
+	const full = detail ? `${title} · ${detail}` : title;
+	return fitText(warningStyle.measure(full).width <= maxWidth ? full : title, warningStyle, maxWidth);
+}
+
+function hasWarnings() {
+	return car.state.status === "ok" && car.state.warnings.length > 0;
+}
+
+function openWarnings() {
+	// Like the picker, open it once while it slides in.
+	const stack = WindowStack.current;
+	if (!stack.depth)
+		stack.push("warnings");
 }
 
 // ---------------------------------------------------------------------------
@@ -117,7 +152,7 @@ function openPicker() {
 		stack.push("picker");
 }
 
-// Tap targets in the header, 44 x 40 like the rows' icons plus a margin.
+// Tap targets in the header, 44 x 40 like the header's icons plus a margin.
 function tapTarget(action, where, icon) {
 	return new Container(action, { ...where, top: 0, width: 44, height: 40, active: true, Behavior: TapBehavior, contents: [icon] });
 }
@@ -184,6 +219,61 @@ function setBattery(icon, pct, color) {
 	}
 }
 
+function addChip(parent, skins, x, top, icon, text, color) {
+	parent.add(new Content(null, { left: x, top: top + 2, skin: skins.chips, state: icon }));
+	parent.add(new Label(null, { left: x + CHIP_SIZE + 3, top, style: chipStyle, state: color, string: text }));
+}
+
+// Outside temperature, climate and odometer, spread over the screen's width.
+// Facts the car didn't report are left out.
+function addFacts(parent, skins, top) {
+	const s = car.state;
+	const items = [];
+	if (s.temp) items.push([CHIP.temp, s.temp, 0]);
+	if (s.climate) items.push(s.climateOn ? [CHIP.climateOn, s.climate, 1] : [CHIP.climateOff, s.climate, 2]);
+	if (s.odometer) items.push([CHIP.odometer, s.odometer, 0]);
+	if (!items.length) return;
+	const widths = items.map(([, text]) => CHIP_SIZE + 3 + chipStyle.measure(text).width);
+	const space = 184 - widths.reduce((a, b) => a + b, 0);
+	const gap = items.length > 1 ? Math.max(4, (space / (items.length - 1)) | 0) : 0;
+	let x = 8;
+	items.forEach(([icon, text, color], i) => {
+		addChip(parent, skins, x, top, icon, text, color);
+		x += widths[i] + gap;
+	});
+}
+
+// The data's age under a rule, or the warnings on a yellow bar.
+function addFooter(parent, skins) {
+	const s = car.state;
+	if (hasWarnings() && !car.refreshing && !s.lastError) {
+		const text = warningText(s.warnings, screen.width - 12 - CHIP_SIZE - 5);
+		const width = CHIP_SIZE + 5 + warningStyle.measure(text).width;
+		const x = (screen.width - width) >> 1;
+		parent.add(new Container(openWarnings, {
+			left: 0, right: 0, top: 200, height: 28, skin: warningSkin, active: true, Behavior: TapBehavior,
+			contents: [
+				new Content(null, { left: x, top: 7, skin: skins.chips, variant: CHIP_WARNING }),
+				new Label(null, { left: x + CHIP_SIZE + 5, top: 5, style: warningStyle, string: text }),
+			],
+		}));
+		return;
+	}
+	const [text, color] = footer();
+	parent.add(new Content(null, { left: 8, right: 8, top: 200, height: 1, skin: ruleSkin }));
+	parent.add(new Label(null, { left: 0, right: 0, top: 205, style: footerStyle, state: color, string: text }));
+}
+
+function chargingLabel(s) {
+	const remain = formatRemain(s.remainMin);
+	const target = s.targetSoc >= 0 ? `${s.targetSoc}%` : "";
+	if (s.charging) {
+		if (remain) return target ? `Charging · ${remain} to ${target}` : `Charging · ${remain} left`;
+		return target ? `Charging to ${target}` : "Charging";
+	}
+	return s.plugged === 1 && target ? `Charging · limit ${target}` : "Charging";
+}
+
 function message(body, text, top) {
 	const content = new Text(null, { left: 10, right: 10, top, style: bodyStyle, string: text });
 	body.add(content);
@@ -194,63 +284,72 @@ const BODIES = {
 	ok: {
 		build(body, skins) {
 			const parts = {
-				doors: addRow(body, 44, glyph(skins.lock, 44)),
-				charging: addRow(body, 96, glyph(skins.plug, 96)),
-				battery: addRow(body, 148, battery(148)),
-				footer: new Label(null, { left: 0, right: 0, top: 205, style: footerStyle, string: "" }),
+				doors: addRow(body, 40, glyph(skins.lock, 40)),
+				charging: addRow(body, 84, glyph(skins.plug, 84)),
+				battery: addRow(body, 128, battery(128)),
+				// What changes layout with the data (the range next to the
+				// battery level, the facts, the footer or the warning bar) is
+				// made again on every update.
+				extras: new Container(null, { left: 0, right: 0, top: 0, bottom: 0 }),
 			};
-			body.add(new Content(null, { left: 8, right: 8, top: 200, height: 1, skin: ruleSkin }));
-			body.add(parts.footer);
+			body.add(parts.extras);
 			return parts;
 		},
 		update(parts, skins) {
 			const s = car.state;
 
 			const doors = parts.doors;
+			const doorsLabel = s.doorsNote ? `Doors · ${s.doorsNote}` : "Doors";
 			if (s.locked === 1) {
 				doors.icon.state = LOCK.locked;
-				setRow(doors, "Doors", "Locked", "green");
+				setRow(doors, doorsLabel, "Locked", "green");
 			}
 			else if (s.locked === 0 || s.locked === 2) {
 				doors.icon.state = LOCK.unlocked;
-				setRow(doors, "Doors", s.locked ? "Door open" : "Unlocked", "red");
+				setRow(doors, doorsLabel, s.locked ? "Door open" : "Unlocked", "red");
 			}
 			else {
 				doors.icon.state = LOCK.unknown;
-				setRow(doors, "Doors", "Unknown", "gray");
+				setRow(doors, doorsLabel, "Unknown", "gray");
 			}
 
 			const charging = parts.charging;
+			const chargingText = chargingLabel(s);
 			if (s.charging) {
-				const remain = formatRemain(s.remainMin);
 				charging.icon.skin = skins.bolt;
 				charging.icon.state = 0;
-				setRow(charging, remain ? `Charging · ${remain} left` : "Charging",
-					s.chargeStatus === "fastCharging" ? "Fast charging" : "Charging", "yellow");
+				setRow(charging, chargingText, s.chargeStatus === "fastCharging" ? "Fast charging" : "Charging", "yellow");
 			}
 			else {
 				charging.icon.skin = skins.plug;
 				charging.icon.state = s.plugged === 1 ? PLUG.plugged : PLUG.unplugged;
 				if (s.plugged === 1)
-					setRow(charging, "Charging", "Plugged in", "white");
+					setRow(charging, chargingText, "Plugged in", "white");
 				else
-					setRow(charging, "Charging", s.plugged === 0 ? "Not plugged in" : "Unknown", "gray");
+					setRow(charging, chargingText, s.plugged === 0 ? "Not plugged in" : "Unknown", "gray");
 			}
 
+			const extras = parts.extras;
+			extras.empty();
 			const batteryRow = parts.battery;
+			const batteryLabel = s.range ? "Battery · range" : "Battery";
 			if (s.soc >= 0) {
 				const color = s.soc >= 50 ? "green" : (s.soc >= 20 ? "yellow" : "red");
+				const value = `${s.soc}%`;
 				setBattery(batteryRow.icon, s.soc, color);
-				setRow(batteryRow, "Battery", `${s.soc}%`, color);
+				setRow(batteryRow, batteryLabel, value, color);
+				if (s.range)
+					extras.add(new Label(null, {
+						left: TEXT_X + valueStyles[color].measure(value).width + 7, top: 128 + 18, style: rangeStyle, string: s.range,
+					}));
 			}
 			else {
 				setBattery(batteryRow.icon, 0);
-				setRow(batteryRow, "Battery", "Unknown", "gray");
+				setRow(batteryRow, batteryLabel, s.range || "Unknown", s.range ? "white" : "gray");
 			}
 
-			const [text, color] = footer();
-			parts.footer.string = text;
-			parts.footer.state = color;
+			addFacts(extras, skins, 175);
+			addFooter(extras, skins);
 		},
 	},
 	nocreds: {
@@ -330,6 +429,11 @@ class DashboardBehavior extends View.Behavior {
 			openPicker();
 		return true;
 	}
+	onPressUp(container) {
+		if (hasWarnings())
+			openWarnings();
+		return true;
+	}
 }
 
 const DashboardContainer = Container.template($ => ({
@@ -345,6 +449,9 @@ export default class Dashboard extends View {
 		this.skins = {
 			lock: glyph(RESOURCE.lock), plug: glyph(RESOURCE.plug), bolt: glyph(RESOURCE.bolt),
 			refresh: glyph(RESOURCE.refresh), car: glyph(RESOURCE.car),
+			chips: new Skin({
+				texture: new Texture(RESOURCE.chips), x: 0, y: 0, width: CHIP_SIZE, height: CHIP_SIZE, states: CHIP_SIZE, variants: CHIP_SIZE,
+			}),
 		};
 	}
 	get Template() { return DashboardContainer }

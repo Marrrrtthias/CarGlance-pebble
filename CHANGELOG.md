@@ -6,6 +6,10 @@
 - The car picker also opens with the Down button.
 - A refresh or car change that can't be sent to the phone is retried, and shows "Update failed: Phone busy" after 10 seconds instead of staying on "Updating…".
 - Long car lists are shortened so they always reach the watch: names are cut to 24 characters, and very long lists may leave out the last cars.
+- The dashboard shows more of the car's data: the range next to the battery level, the charge limit, whether the hood, trunk or sunroof is open, and a strip with outside temperature, climate control and odometer.
+- Car warnings: low tire pressure, low fluids, a weak key battery or a failed bulb show in a yellow bar at the bottom. Press Up or tap it to list them.
+- New dashboard icons.
+- Demo mode has a third car, with several warnings.
 
 ## 1.1.0 – 2026-11-08
 

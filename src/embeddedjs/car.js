@@ -116,6 +116,15 @@ function parseVehicles(str) {
 	});
 }
 
+// The car's warnings ({ title, detail }), one "title<TAB>detail" per line.
+function parseWarnings(str) {
+	if (typeof str !== "string" || !str) return [];
+	return str.split("\n").map(line => {
+		const [title, detail] = line.split("\t");
+		return { title, detail: detail || "" };
+	});
+}
+
 function num(v, fallback) {
 	return typeof v === "number" ? v : fallback;
 }
@@ -148,12 +157,14 @@ function refreshFailed(error) {
 const message = new Message({
 	// Buffer sizes in bytes. The default (the maximum, 8 kB each way) would
 	// take memory the app heap doesn't have to spare. The largest message is
-	// the car list (VEHICLES) with a status; the watch only sends one number.
-	input: 1024,
+	// the car data with the car list (VEHICLES) and the warnings (WARNINGS,
+	// capped by the phone); the watch only sends one number.
+	input: 1536,
 	output: 128,
 	keys: ["REFRESH", "STATUS", "ERROR", "NAME", "LOCKED", "PLUGGED", "CHARGING",
 		"CHARGE_STATUS", "SOC", "REMAIN_MIN", "DATA_TIME", "VEHICLES", "VEHICLE_INDEX",
-		"SELECT_VEHICLE"],
+		"SELECT_VEHICLE", "DOORS_NOTE", "TARGET_SOC", "RANGE", "TEMP", "CLIMATE", "CLIMATE_ON",
+		"ODOMETER", "WARNINGS"],
 	onReadable() {
 		const msg = this.read();
 		const status = msg.get("STATUS");
@@ -185,6 +196,14 @@ const message = new Message({
 				chargeStatus: msg.get("CHARGE_STATUS") || "",
 				soc: num(msg.get("SOC"), -1),
 				remainMin: num(msg.get("REMAIN_MIN"), 0),
+				targetSoc: num(msg.get("TARGET_SOC"), -1),
+				doorsNote: msg.get("DOORS_NOTE") || "",
+				range: msg.get("RANGE") || "",
+				temp: msg.get("TEMP") || "",
+				climate: msg.get("CLIMATE") || "",
+				climateOn: num(msg.get("CLIMATE_ON"), -1) === 1,
+				odometer: msg.get("ODOMETER") || "",
+				warnings: parseWarnings(msg.get("WARNINGS")),
 				dataTime: num(msg.get("DATA_TIME"), -1),
 			};
 		} else if (status === "error") {
