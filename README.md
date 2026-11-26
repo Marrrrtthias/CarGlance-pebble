@@ -84,6 +84,7 @@ that was just issued is shown right away, since a new login would not change it.
 **Settings and secrets.**
 - The settings page is built with [Clay](https://github.com/pebble-dev/clay), with automatic event handling turned off.
 - Your credentials are stored only in the phone app's `localStorage`. They are never sent to the watch, and the phone only uses them to call `api.pleos.ai`.
+- The app's only permission is internet access to `api.pleos.ai`. The Pebble app asks for it the first time CarGlance loads your car's data, not at install, so demo mode works without it. Until you allow it, the watch shows "Allow CarGlance internet access in the Pebble app".
 - In the emulator, the page is served as a self-contained page, because Clay's old HTTP-only proxy page doesn't load in browsers that force HTTPS.
 
 **Message keys.** The keys are declared in `package.json` under `pebble.messageKeys` and must match the `keys` list in `car.js`.
@@ -123,7 +124,7 @@ rejected tokens, and failures without real credentials or API calls. The
 vehicle list tests check that the car list always fits the watch's message
 buffer.
 
-You need the [Pebble SDK](https://developer.repebble.com) (`pebble` tool with SDK 4.33 or newer).
+You need the [Pebble SDK](https://developer.repebble.com) (`pebble` tool with SDK 4.44 or newer, which builds the app with the permissions it declares).
 
 ```bash
 git submodule update --init           # once, fetches pebble-ui (or clone with --recurse-submodules)

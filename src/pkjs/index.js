@@ -6,6 +6,17 @@ var clayConfig = require('./config');
 var clay = new Clay(clayConfig, null, { autoHandleEvents: false });
 
 var API_BASE = 'https://api.pleos.ai';
+// The Internet permission for API_BASE, as declared in package.json's
+// usesPermissions. It is optional: the phone app asks for it the first time a
+// request is made, so the demo never needs it. Until the user answers, or if
+// they turned it off, requests fail like a network error.
+var INTERNET_PERMISSION = 'Internet/api.pleos.ai';
+// What the watch shows when a request failed because of the permission, by
+// Pebble.permissions.query state (at most 60 characters, see sendError).
+var PERMISSION_ERRORS = {
+  prompt: 'Allow CarGlance internet access in the Pebble app',
+  denied: 'Internet access for CarGlance is off in the Pebble app'
+};
 var STORE_CONFIG = 'bp-config';
 var STORE_TOKEN = 'bp-token';
 var STORE_VEHICLES = 'bp-vehicles';
@@ -145,12 +156,34 @@ function request(method, path, cfg, token, body, cb) {
     cb(new ApiError(msg, apiErr && apiErr.code, xhr.status));
   };
   xhr.onerror = function () {
-    cb(new ApiError('Network error'));
+    networkError('Network error', cb);
   };
   xhr.ontimeout = function () {
-    cb(new ApiError('Request timed out'));
+    networkError('Request timed out', cb);
   };
   xhr.send(body ? JSON.stringify(body) : null);
+}
+
+// Reports a request that got no response. If that is because the user hasn't
+// allowed the Internet permission (yet), says so instead of `message`. Phone
+// apps without the permission system have no Pebble.permissions.
+function networkError(message, cb) {
+  var answered = false;
+  function answer(state) {
+    if (answered) return;
+    answered = true;
+    cb(new ApiError(PERMISSION_ERRORS[state] || message));
+  }
+  var permissions = typeof Pebble !== 'undefined' && Pebble.permissions;
+  if (!permissions || typeof permissions.query !== 'function') {
+    answer(null);
+    return;
+  }
+  try {
+    permissions.query(INTERNET_PERMISSION).then(answer, function () { answer(null); });
+  } catch (e) {
+    answer(null);
+  }
 }
 
 function fetchToken(cfg, cb) {
