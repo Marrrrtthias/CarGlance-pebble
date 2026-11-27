@@ -6,6 +6,17 @@ var clayConfig = require('./config');
 var clay = new Clay(clayConfig, null, { autoHandleEvents: false });
 
 var API_BASE = 'https://api.pleos.ai';
+// The Internet permission for API_BASE, as declared in package.json's
+// usesPermissions. It is required: the phone app asks for it at install. If the
+// user denied it, or turned it off later, requests fail like a network error.
+var INTERNET_PERMISSION = 'Internet/api.pleos.ai';
+// What the watch shows when a request failed because of the permission, by
+// Pebble.permissions.query state (at most 60 characters, see sendError).
+var PERMISSION_QUERY_TIMEOUT_MS = 2000;
+var PERMISSION_ERRORS = {
+  prompt: 'Allow CarGlance internet access in the Pebble app',
+  denied: 'Internet access for CarGlance is off in the Pebble app'
+};
 var STORE_CONFIG = 'bp-config';
 var STORE_TOKEN = 'bp-token';
 var STORE_VEHICLES = 'bp-vehicles';
@@ -145,12 +156,42 @@ function request(method, path, cfg, token, body, cb) {
     cb(new ApiError(msg, apiErr && apiErr.code, xhr.status));
   };
   xhr.onerror = function () {
-    cb(new ApiError('Network error'));
+    networkError('Network error', cb);
   };
   xhr.ontimeout = function () {
-    cb(new ApiError('Request timed out'));
+    networkError('Request timed out', cb);
   };
   xhr.send(body ? JSON.stringify(body) : null);
+}
+
+// Reports a request that got no response. If that is because the user hasn't
+// allowed the Internet permission (yet), says so instead of `message`. Phone
+// apps without the permission system have no Pebble.permissions. A query that
+// hasn't answered after PERMISSION_QUERY_TIMEOUT_MS counts as unknown, so the
+// error is still reported and inflightVin cleared.
+//
+// Pebble.permissions.query only returns a promise: this is the one place in
+// this file that uses one instead of a callback.
+function networkError(message, cb) {
+  var answered = false;
+  var timer = null;
+  function answer(state) {
+    if (answered) return;
+    answered = true;
+    if (timer !== null) clearTimeout(timer);
+    cb(new ApiError(PERMISSION_ERRORS[state] || message));
+  }
+  var permissions = typeof Pebble !== 'undefined' && Pebble.permissions;
+  if (!permissions || typeof permissions.query !== 'function') {
+    answer(null);
+    return;
+  }
+  timer = setTimeout(function () { answer(null); }, PERMISSION_QUERY_TIMEOUT_MS);
+  try {
+    permissions.query(INTERNET_PERMISSION).then(answer, function () { answer(null); });
+  } catch (e) {
+    answer(null);
+  }
 }
 
 function fetchToken(cfg, cb) {

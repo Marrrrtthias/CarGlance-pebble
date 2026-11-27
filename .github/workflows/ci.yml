@@ -15,7 +15,7 @@ concurrency:
 
 env:
   PEBBLE_TOOL_VERSION: "5.1.2"
-  PEBBLE_SDK_VERSION: "4.33.1"
+  PEBBLE_SDK_VERSION: "4.44"
 
 jobs:
   test:
