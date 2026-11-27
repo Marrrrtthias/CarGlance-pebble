@@ -34,7 +34,7 @@
           ]
         },
         "reason": "To load your car's status from the Pleos API",
-        "required": false
+        "required": true
       }
     ],
     "messageKeys": [

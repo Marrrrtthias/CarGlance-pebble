@@ -7,9 +7,8 @@ var clay = new Clay(clayConfig, null, { autoHandleEvents: false });
 
 var API_BASE = 'https://api.pleos.ai';
 // The Internet permission for API_BASE, as declared in package.json's
-// usesPermissions. It is optional: the phone app asks for it the first time a
-// request is made, so the demo never needs it. Until the user answers, or if
-// they turned it off, requests fail like a network error.
+// usesPermissions. It is required: the phone app asks for it at install. If the
+// user denied it, or turned it off later, requests fail like a network error.
 var INTERNET_PERMISSION = 'Internet/api.pleos.ai';
 // What the watch shows when a request failed because of the permission, by
 // Pebble.permissions.query state (at most 60 characters, see sendError).

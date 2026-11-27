@@ -1,4 +1,4 @@
-// The optional Internet permission: a request without a response reports a
+// The Internet permission: a request without a response reports a
 // missing permission instead of a network error. Run: node --test tests/permission.test.cjs
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
@@ -31,14 +31,14 @@ function failure(app, message) {
   return new Promise(resolve => app.context.networkError(message, resolve));
 }
 
-test('the queried permission is the one package.json declares, as optional', () => {
+test('the queried permission is the one package.json declares, as required', () => {
   const app = runtime();
   const [name, domain] = app.context.INTERNET_PERMISSION.split('/');
   const declared = manifest.usesPermissions.filter(p => p.name === name);
   assert.equal(declared.length, 1);
   assert.deepEqual(declared[0].parameters.domains, [domain]);
   assert.equal('https://' + domain, app.context.API_BASE);
-  assert.equal(declared[0].required, false);
+  assert.equal(declared[0].required, true);
   assert.ok(declared[0].reason);
 });
 
