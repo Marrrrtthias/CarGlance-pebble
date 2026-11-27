@@ -21,6 +21,8 @@ function runtime(permissions) {
     require: () => function Clay() {},
     console: { log() {} },
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    setTimeout,
+    clearTimeout,
     Pebble: pebble
   });
   vm.runInContext(source, context);
@@ -63,4 +65,20 @@ test('a granted permission, a failed query or no permission system keep the netw
     const error = await failure(runtime(permissions), 'Request timed out');
     assert.equal(error.message, 'Request timed out');
   }
+});
+
+test('a query that never answers still reports the network error', async () => {
+  const app = runtime(() => new Promise(() => {}));
+  app.context.PERMISSION_QUERY_TIMEOUT_MS = 10;
+  const error = await failure(app, 'Network error');
+  assert.equal(error.message, 'Network error');
+});
+
+test('an answered query cancels its timeout and reports only once', async () => {
+  const app = runtime(() => Promise.resolve('denied'));
+  app.context.PERMISSION_QUERY_TIMEOUT_MS = 10;
+  const errors = [];
+  app.context.networkError('Network error', error => errors.push(error.message));
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.deepEqual(errors, [app.context.PERMISSION_ERRORS.denied]);
 });

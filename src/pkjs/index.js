@@ -12,6 +12,7 @@ var API_BASE = 'https://api.pleos.ai';
 var INTERNET_PERMISSION = 'Internet/api.pleos.ai';
 // What the watch shows when a request failed because of the permission, by
 // Pebble.permissions.query state (at most 60 characters, see sendError).
+var PERMISSION_QUERY_TIMEOUT_MS = 2000;
 var PERMISSION_ERRORS = {
   prompt: 'Allow CarGlance internet access in the Pebble app',
   denied: 'Internet access for CarGlance is off in the Pebble app'
@@ -165,12 +166,19 @@ function request(method, path, cfg, token, body, cb) {
 
 // Reports a request that got no response. If that is because the user hasn't
 // allowed the Internet permission (yet), says so instead of `message`. Phone
-// apps without the permission system have no Pebble.permissions.
+// apps without the permission system have no Pebble.permissions. A query that
+// hasn't answered after PERMISSION_QUERY_TIMEOUT_MS counts as unknown, so the
+// error is still reported and inflightVin cleared.
+//
+// Pebble.permissions.query only returns a promise: this is the one place in
+// this file that uses one instead of a callback.
 function networkError(message, cb) {
   var answered = false;
+  var timer = null;
   function answer(state) {
     if (answered) return;
     answered = true;
+    if (timer !== null) clearTimeout(timer);
     cb(new ApiError(PERMISSION_ERRORS[state] || message));
   }
   var permissions = typeof Pebble !== 'undefined' && Pebble.permissions;
@@ -178,6 +186,7 @@ function networkError(message, cb) {
     answer(null);
     return;
   }
+  timer = setTimeout(function () { answer(null); }, PERMISSION_QUERY_TIMEOUT_MS);
   try {
     permissions.query(INTERNET_PERMISSION).then(answer, function () { answer(null); });
   } catch (e) {
